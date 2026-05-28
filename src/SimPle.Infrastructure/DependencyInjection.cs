@@ -29,6 +29,8 @@ public static class DependencyInjection
 
         services.AddScoped<IPasswordHashingService, Argon2PasswordHasher>();
         services.AddScoped<ITokenService, JwtTokenService>();
+        services.AddMemoryCache();
+        services.AddSingleton<IRevokedJtiStore, MemoryCacheRevokedJtiStore>();
         services.AddScoped<IUserRepository, UserRepository>();
         services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
         services.AddScoped<IEmailVerificationTokenRepository, EmailVerificationTokenRepository>();

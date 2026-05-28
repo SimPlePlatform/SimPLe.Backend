@@ -15,6 +15,7 @@ using SimPle.Api.Models;
 using SimPle.Api.OpenApi;
 using SimPle.Application;
 using SimPle.Application.Auth.Validators;
+using SimPle.Application.Common.Interfaces;
 using SimPle.Application.Common.Options;
 using SimPle.Infrastructure;
 using SimPle.Infrastructure.Auth;
@@ -111,6 +112,21 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
             OnMessageReceived = context =>
             {
                 context.Token = context.Request.Cookies["access_token"];
+                return Task.CompletedTask;
+            },
+            OnTokenValidated = context =>
+            {
+                // Check if this session's family was revoked (e.g. "sign out of device").
+                // The 'sid' claim carries the session family ID, which is stable across token rotation.
+                var sid = context.Principal?.FindFirst("sid")?.Value;
+                if (sid is not null)
+                {
+                    var jtiStore = context.HttpContext.RequestServices.GetRequiredService<IRevokedJtiStore>();
+                    if (jtiStore.IsRevoked(sid))
+                    {
+                        context.Fail("Session has been revoked.");
+                    }
+                }
                 return Task.CompletedTask;
             },
             OnChallenge = async context =>

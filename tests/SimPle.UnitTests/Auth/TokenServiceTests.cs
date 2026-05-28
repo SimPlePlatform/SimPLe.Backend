@@ -21,13 +21,17 @@ public sealed class TokenServiceTests
     {
         var userId = Guid.NewGuid();
 
-        var (token, expiresAt) = _service.GenerateAccessToken(userId, "mohan", "Player");
+        var familyId = Guid.NewGuid();
+        var (token, expiresAt, jti) = _service.GenerateAccessToken(userId, "mohan", "Player", familyId);
         var jwt = new JwtSecurityTokenHandler().ReadJwtToken(token);
 
         jwt.Subject.Should().Be(userId.ToString());
         jwt.Claims.Single(c => c.Type == ClaimTypes.Name).Value.Should().Be("mohan");
         jwt.Claims.Single(c => c.Type == ClaimTypes.Role).Value.Should().Be("Player");
         expiresAt.Should().BeCloseTo(DateTime.UtcNow.AddMinutes(15), TimeSpan.FromSeconds(5));
+        jti.Should().NotBeNullOrEmpty();
+        jwt.Claims.Single(c => c.Type == JwtRegisteredClaimNames.Jti).Value.Should().Be(jti);
+        jwt.Claims.Single(c => c.Type == JwtRegisteredClaimNames.Sid).Value.Should().Be(familyId.ToString());
         _service.ValidateAccessToken(token).Should().Be(userId);
     }
 

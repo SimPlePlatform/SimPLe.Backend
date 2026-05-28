@@ -22,13 +22,14 @@ public sealed class AuthServiceTests
     private readonly ITokenService _tokenService = Substitute.For<ITokenService>();
     private readonly IEmailService _emailService = Substitute.For<IEmailService>();
     private readonly IGoogleTokenValidationService _googleValidator = Substitute.For<IGoogleTokenValidationService>();
+    private readonly IRevokedJtiStore _revokedJtis = Substitute.For<IRevokedJtiStore>();
     private readonly AuthService _service;
 
     public AuthServiceTests()
     {
         _hasher.Hash(Arg.Any<string>()).Returns("stored-password-hash");
-        _tokenService.GenerateAccessToken(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>())
-            .Returns(_ => ("access-token", DateTime.UtcNow.AddMinutes(15)));
+        _tokenService.GenerateAccessToken(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<Guid>())
+            .Returns(_ => ("access-token", DateTime.UtcNow.AddMinutes(15), "test-jti"));
         _tokenService.GenerateRawRefreshToken().Returns("new-raw-token");
         _tokenService.HashToken(Arg.Any<string>())
             .Returns(call => "hash-" + call.Arg<string>());
@@ -42,6 +43,7 @@ public sealed class AuthServiceTests
             _tokenService,
             _emailService,
             _googleValidator,
+            _revokedJtis,
             Options.Create(new AuthOptions
             {
                 RefreshTokenExpiryDays = 7,

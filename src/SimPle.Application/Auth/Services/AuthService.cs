@@ -18,6 +18,7 @@ public sealed class AuthService : IAuthService
     private readonly ITokenService _tokenService;
     private readonly IEmailService _email;
     private readonly IGoogleTokenValidationService _googleValidator;
+    private readonly IRevokedJtiStore _revokedJtis;
     private readonly AuthOptions _authOptions;
     private readonly EmailOptions _emailOptions;
     private readonly ILogger<AuthService> _logger;
@@ -31,6 +32,7 @@ public sealed class AuthService : IAuthService
         ITokenService tokenService,
         IEmailService email,
         IGoogleTokenValidationService googleValidator,
+        IRevokedJtiStore revokedJtis,
         IOptions<AuthOptions> authOptions,
         IOptions<EmailOptions> emailOptions,
         ILogger<AuthService> logger)
@@ -43,6 +45,7 @@ public sealed class AuthService : IAuthService
         _tokenService = tokenService;
         _email = email;
         _googleValidator = googleValidator;
+        _revokedJtis = revokedJtis;
         _authOptions = authOptions.Value;
         _emailOptions = emailOptions.Value;
         _logger = logger;
@@ -243,6 +246,11 @@ public sealed class AuthService : IAuthService
 
     public async Task<Result> LogoutAllAsync(Guid userId, CancellationToken ct = default)
     {
+        // Block all active session family IDs immediately so current access tokens get a 401.
+        var active = await _tokens.GetActiveByUserIdAsync(userId, ct);
+        foreach (var t in active)
+            _revokedJtis.Revoke(t.FamilyId.ToString(), TimeSpan.FromMinutes(20));
+
         await _tokens.RevokeAllByUserIdAsync(userId, "Logout all", ct);
         _logger.LogInformation("Security: Logout-all. UserId={UserId}", userId);
         return Result.Ok();
@@ -407,8 +415,9 @@ public sealed class AuthService : IAuthService
     private async Task<AuthTokenResult> IssueTokenPairAsync(
         User user, string ipAddress, string? userAgent, CancellationToken ct, Guid? familyId = null)
     {
-        var (accessToken, expiresAt) = _tokenService.GenerateAccessToken(
-            user.Id, user.Username, user.Role.ToString());
+        var sessionFamilyId = familyId ?? Guid.NewGuid();
+        var (accessToken, expiresAt, _) = _tokenService.GenerateAccessToken(
+            user.Id, user.Username, user.Role.ToString(), sessionFamilyId);
 
         var rawRefreshToken = _tokenService.GenerateRawRefreshToken();
         var tokenHash = _tokenService.HashToken(rawRefreshToken);
@@ -416,7 +425,7 @@ public sealed class AuthService : IAuthService
         var refreshToken = RefreshToken.Create(
             userId: user.Id,
             tokenHash: tokenHash,
-            familyId: familyId ?? Guid.NewGuid(),
+            familyId: sessionFamilyId,
             expiresAt: DateTime.UtcNow.AddDays(_authOptions.RefreshTokenExpiryDays),
             createdByIp: ipAddress,
             userAgent: userAgent);
@@ -501,6 +510,10 @@ public sealed class AuthService : IAuthService
             return Result.Fail("General.NotFound", "Session not found.");
         if (!token.IsActive)
             return Result.Fail("Auth.SessionInactive", "Session is already inactive.");
+
+        // Block the session's family ID so the current access token gets a 401 on the next request,
+        // rather than waiting up to 15 minutes for it to expire naturally.
+        _revokedJtis.Revoke(token.FamilyId.ToString(), TimeSpan.FromMinutes(20));
 
         token.Revoke(string.Empty, "user_revoked");
         await _tokens.UpdateAsync(token, ct);

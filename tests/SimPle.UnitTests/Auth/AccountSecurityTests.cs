@@ -21,18 +21,20 @@ public sealed class AccountSecurityTests
     private readonly ITokenService _tokenService = Substitute.For<ITokenService>();
     private readonly IEmailService _emailService = Substitute.For<IEmailService>();
     private readonly IGoogleTokenValidationService _googleValidator = Substitute.For<IGoogleTokenValidationService>();
+    private readonly IRevokedJtiStore _revokedJtis = Substitute.For<IRevokedJtiStore>();
     private readonly AuthService _service;
 
     public AccountSecurityTests()
     {
-        _tokenService.GenerateAccessToken(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>())
-            .Returns(_ => ("access-token", DateTime.UtcNow.AddMinutes(15)));
+        _tokenService.GenerateAccessToken(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<Guid>())
+            .Returns(_ => ("access-token", DateTime.UtcNow.AddMinutes(15), "test-jti"));
         _tokenService.GenerateRawRefreshToken().Returns("raw-token");
         _tokenService.HashToken(Arg.Any<string>()).Returns(call => "hash-" + call.Arg<string>());
 
         _service = new AuthService(
             _users, _tokens, _verificationTokens, _resetTokens,
             _hasher, _tokenService, _emailService, _googleValidator,
+            _revokedJtis,
             Options.Create(new AuthOptions { RefreshTokenExpiryDays = 7, MaxFailedLoginAttempts = 10, LockoutDurationMinutes = 15 }),
             Options.Create(new EmailOptions { AppUrl = "http://localhost:3000", SmtpHost = "smtp.test", Password = "x" }),
             NullLogger<AuthService>.Instance);
