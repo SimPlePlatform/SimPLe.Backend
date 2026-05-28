@@ -35,7 +35,7 @@ public sealed class ProfileEndpointsTests : IDisposable
         var body = await response.Content.ReadAsStringAsync();
         body.Should().Contain($"\"username\":\"{username}\"");
         body.Should().Contain("\"visibility\":\"Public\"");
-        body.Should().Contain("\"profileType\":\"Gamer\"");
+        body.Should().Contain("\"profileType\":\"Player\"");
         body.Should().NotContain("email");
         body.Should().NotContain("passwordHash");
         body.Should().NotContain("failedLoginCount");
@@ -413,7 +413,7 @@ public sealed class ProfileEndpointsTests : IDisposable
     // ── Username update ───────────────────────────────────────────────────────
 
     [Fact]
-    public async Task UpdateUsername_NewAvailableHandle_Returns204()
+    public async Task UpdateUsername_NewAvailableHandle_Returns200()
     {
         using var client = CreateClient();
         var (email, username) = UniqueUser();
@@ -422,7 +422,7 @@ public sealed class ProfileEndpointsTests : IDisposable
         var newHandle = "handle" + Guid.NewGuid().ToString("N")[..6];
         var response = await client.PutAsJsonAsync("/api/profile/me/username", new { Username = newHandle });
 
-        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     [Fact]

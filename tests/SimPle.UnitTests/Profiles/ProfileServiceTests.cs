@@ -30,6 +30,8 @@ public sealed class ProfileServiceTests
         _profiles.GetLinksByUserIdAsync(Arg.Any<Guid>()).Returns((IReadOnlyList<ProfileExternalLink>)[]);
         _profiles.GetInterestsByUserIdAsync(Arg.Any<Guid>()).Returns((IReadOnlyList<ProfileInterestTag>)[]);
         _usernameRequests.GetPendingByUserIdAsync(Arg.Any<Guid>()).Returns((UsernameChangeRequest?)null);
+        _usernameRequests.GetByUserIdAndMonthAsync(Arg.Any<Guid>(), Arg.Any<int>(), Arg.Any<int>())
+            .Returns((UsernameChangeRequest?)null);
         _storage.CreatePresignedPutUrlAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan>())
             .Returns(x => $"https://upload.example.test/{x.ArgAt<string>(0)}");
         _storage.CreatePresignedReadUrlAsync(Arg.Any<string>(), Arg.Any<TimeSpan>())
@@ -55,7 +57,7 @@ public sealed class ProfileServiceTests
         result.Value!.UserId.Should().Be(user.Id);
         result.Value.Username.Should().Be("testuser");
         result.Value.Visibility.Should().Be("Public");
-        result.Value.ProfileType.Should().Be("Gamer");
+        result.Value.ProfileType.Should().Be("Player");
     }
 
     [Fact]
@@ -186,18 +188,92 @@ public sealed class ProfileServiceTests
         var result = await _service.UpdateUsernameAsync(user.Id, "newhandle");
 
         result.IsSuccess.Should().BeTrue();
+        result.Value!.AppliedImmediately.Should().BeTrue();
         await _users.Received(1).UpdateAsync(Arg.Is<User>(u => u.Username == "newhandle"));
     }
 
     [Fact]
     public async Task UpdateUsername_Taken_Fails()
     {
+        var user = MakeUser();
+        _users.GetByIdAsync(user.Id).Returns(user);
         _users.ExistsByUsernameAsync(Arg.Any<string>()).Returns(true);
 
-        var result = await _service.UpdateUsernameAsync(Guid.NewGuid(), "takenname");
+        var result = await _service.UpdateUsernameAsync(user.Id, "takenname");
 
         result.IsSuccess.Should().BeFalse();
         result.Error!.Code.Should().Be("Profile.UsernameTaken");
+    }
+
+    [Fact]
+    public async Task UpdateUsername_SecondChangeInMonth_CreatesAdminRequest()
+    {
+        var user = MakeUser();
+        var now = DateTime.UtcNow;
+        user.RecordImmediateUsernameChange(now.Year, now.Month);
+        _users.GetByIdAsync(user.Id).Returns(user);
+        _users.ExistsByUsernameAsync("SECONDHANDLE").Returns(false);
+
+        var result = await _service.UpdateUsernameAsync(user.Id, "secondhandle");
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.AppliedImmediately.Should().BeFalse();
+        result.Value.Request!.RequestedUsername.Should().Be("secondhandle");
+        result.Value.Request.Status.Should().Be("Pending");
+        await _usernameRequests.Received(1).AddAsync(Arg.Is<UsernameChangeRequest>(r =>
+            r.UserId == user.Id &&
+            r.RequestedUsername == "secondhandle" &&
+            r.RequestYear == now.Year &&
+            r.RequestMonth == now.Month));
+    }
+
+    [Fact]
+    public async Task RequestUsernameChange_PendingRequest_UpdatesSameRequest()
+    {
+        var user = MakeUser();
+        var now = DateTime.UtcNow;
+        var existing = UsernameChangeRequest.Create(user.Id, "oldhandle", now.Year, now.Month);
+        _users.GetByIdAsync(user.Id).Returns(user);
+        _users.ExistsByUsernameAsync("NEWHANDLE").Returns(false);
+        _usernameRequests.GetPendingByUserIdAsync(user.Id).Returns(existing);
+
+        var result = await _service.RequestUsernameChangeAsync(user.Id, "newhandle");
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.RequestedUsername.Should().Be("newhandle");
+        await _usernameRequests.Received(1).UpdateAsync(Arg.Is<UsernameChangeRequest>(r => r.Id == existing.Id));
+        await _usernameRequests.DidNotReceive().AddAsync(Arg.Any<UsernameChangeRequest>());
+    }
+
+    [Fact]
+    public async Task CancelUsernameChangeRequest_PendingRequest_MarksCancelled()
+    {
+        var user = MakeUser();
+        var now = DateTime.UtcNow;
+        var existing = UsernameChangeRequest.Create(user.Id, "oldhandle", now.Year, now.Month);
+        _usernameRequests.GetPendingByUserIdAsync(user.Id).Returns(existing);
+
+        var result = await _service.CancelUsernameChangeRequestAsync(user.Id);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.Status.Should().Be("Cancelled");
+        result.Value.CanCancel.Should().BeFalse();
+        await _usernameRequests.Received(1).UpdateAsync(Arg.Is<UsernameChangeRequest>(r => r.Status == UsernameChangeStatus.Cancelled));
+    }
+
+    [Fact]
+    public async Task RequestUsernameChange_AdminAllowanceAlreadyUsed_Fails()
+    {
+        var user = MakeUser();
+        var now = DateTime.UtcNow;
+        user.RecordAdminUsernameRequest(now.Year, now.Month);
+        _users.GetByIdAsync(user.Id).Returns(user);
+        _users.ExistsByUsernameAsync("ANOTHERHANDLE").Returns(false);
+
+        var result = await _service.RequestUsernameChangeAsync(user.Id, "anotherhandle");
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error!.Code.Should().Be("Profile.MonthlyAdminRequestUsed");
     }
 
     // ── UpdateLinks ───────────────────────────────────────────────────────────
@@ -267,7 +343,7 @@ public sealed class ProfileServiceTests
         var validator = new UpdateProfileRequestValidator();
         var dto = new UpdateProfileRequestDto(
             "Test User", "Bio text", "https://example.com/avatar.png",
-            null, "EU-West", null, "Public", "Gamer");
+            null, "", null, "Public", "Player");
         var result = await validator.ValidateAsync(dto, CancellationToken.None);
         result.IsValid.Should().BeTrue();
     }
@@ -423,6 +499,33 @@ public sealed class ProfileServiceTests
 
         result.IsSuccess.Should().BeTrue();
         result.Value!.Color.Should().Be("#3366AA");
+    }
+
+    [Fact]
+    public async Task UpdateBannerFallbackColor_ValidColor_UpdatesColor()
+    {
+        var user = MakeUser();
+        _users.GetByIdAsync(user.Id).Returns(user);
+
+        var result = await _service.UpdateBannerFallbackColorAsync(user.Id, "#123456");
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.BannerFallbackColor.Should().Be("#123456");
+    }
+
+    [Theory]
+    [InlineData("red")]
+    [InlineData("url(javascript:alert(1))")]
+    [InlineData("#12")]
+    public async Task UpdateBannerFallbackColor_InvalidColor_Fails(string color)
+    {
+        var user = MakeUser();
+        _users.GetByIdAsync(user.Id).Returns(user);
+
+        var result = await _service.UpdateBannerFallbackColorAsync(user.Id, color);
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error!.Code.Should().Be("Validation.Failed");
     }
 
     [Theory]
