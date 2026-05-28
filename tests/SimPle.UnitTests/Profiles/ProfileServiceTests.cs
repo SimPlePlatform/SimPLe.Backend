@@ -18,11 +18,11 @@ public sealed class ProfileServiceTests
     private readonly IUsernameChangeRequestRepository _usernameRequests = Substitute.For<IUsernameChangeRequestRepository>();
     private readonly IFileStorageService _storage = Substitute.For<IFileStorageService>();
     private readonly ProfileService _service;
-    private readonly AwsOptions _aws = new()
+    private readonly StorageOptions _storageOptions = new()
     {
-        S3ProfilePrefix = "profile-assets",
-        S3UploadUrlExpiryMinutes = 10,
-        S3ReadUrlExpiryMinutes = 15
+        ProfilePrefix = "profile-assets",
+        UploadUrlExpiryMinutes = 10,
+        ReadUrlExpiryMinutes = 15
     };
 
     public ProfileServiceTests()
@@ -35,7 +35,7 @@ public sealed class ProfileServiceTests
         _storage.CreatePresignedReadUrlAsync(Arg.Any<string>(), Arg.Any<TimeSpan>())
             .Returns(x => $"https://read.example.test/{x.ArgAt<string>(0)}");
         _storage.ObjectExistsAsync(Arg.Any<string>()).Returns(true);
-        _service = new ProfileService(_users, _profiles, _usernameRequests, _storage, Options.Create(_aws));
+        _service = new ProfileService(_users, _profiles, _usernameRequests, _storage, Options.Create(_storageOptions));
     }
 
     private static User MakeUser(string username = "testuser") =>
