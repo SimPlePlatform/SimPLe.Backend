@@ -11,6 +11,8 @@ public interface IRefreshTokenRepository
     Task<bool> TryUpdateAsync(RefreshToken token, CancellationToken ct = default);
     Task RevokeAllByFamilyIdAsync(Guid familyId, string reason, CancellationToken ct = default);
     Task RevokeAllByUserIdAsync(Guid userId, string reason, CancellationToken ct = default);
+    Task<IReadOnlyList<RefreshToken>> GetActiveByUserIdAsync(Guid userId, CancellationToken ct = default);
+    Task<RefreshToken?> GetByIdAsync(Guid id, CancellationToken ct = default);
     // Returns number of rows deleted.
     Task<int> DeleteExpiredAsync(DateTime before, CancellationToken ct = default);
 }

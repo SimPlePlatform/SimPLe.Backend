@@ -66,6 +66,16 @@ public sealed class RefreshTokenRepository : IRefreshTokenRepository
         await _db.SaveChangesAsync(ct);
     }
 
+    public Task<IReadOnlyList<RefreshToken>> GetActiveByUserIdAsync(Guid userId, CancellationToken ct = default) =>
+        _db.RefreshTokens
+            .Where(t => t.UserId == userId && t.RevokedAt == null && t.ExpiresAt > DateTime.UtcNow)
+            .OrderByDescending(t => t.CreatedAt)
+            .ToListAsync(ct)
+            .ContinueWith(t => (IReadOnlyList<RefreshToken>)t.Result, ct);
+
+    public Task<RefreshToken?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
+        _db.RefreshTokens.FirstOrDefaultAsync(t => t.Id == id, ct);
+
     // Deletes tokens that are both expired and revoked/superseded, giving a retention buffer.
     public Task<int> DeleteExpiredAsync(DateTime before, CancellationToken ct = default) =>
         _db.RefreshTokens

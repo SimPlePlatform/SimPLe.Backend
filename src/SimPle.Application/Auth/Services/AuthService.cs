@@ -290,6 +290,15 @@ public sealed class AuthService : IAuthService
         stored.MarkUsed();
         await _verificationTokens.UpdateAsync(stored, ct);
 
+        if (!string.IsNullOrEmpty(stored.PendingEmail))
+        {
+            // Email-change confirmation flow.
+            user.UpdateEmail(stored.PendingEmail);
+            await _users.UpdateAsync(user, ct);
+            _logger.LogInformation("Security: Email changed. UserId={UserId}", user.Id);
+            return Result.Ok();
+        }
+
         user.VerifyEmail();
         await _users.UpdateAsync(user, ct);
 
@@ -415,6 +424,102 @@ public sealed class AuthService : IAuthService
         await _tokens.AddAsync(refreshToken, ct);
 
         return new AuthTokenResult(accessToken, rawRefreshToken, expiresAt, ToDto(user));
+    }
+
+    public async Task<Result> ChangePasswordAsync(
+        Guid userId, string currentPassword, string newPassword, CancellationToken ct = default)
+    {
+        var user = await _users.GetByIdAsync(userId, ct);
+        if (user is null) return Result.Fail("General.NotFound", "User not found.");
+
+        if (string.IsNullOrEmpty(user.PasswordHash))
+            return Result.Fail("Auth.GoogleOnly", "This account uses Google sign-in. Use 'Forgot password' to set a password.");
+
+        if (!_hasher.Verify(currentPassword, user.PasswordHash))
+        {
+            _logger.LogWarning("ChangePassword: incorrect current password for user {UserId}", userId);
+            return Result.Fail("Auth.InvalidCredentials", "Current password is incorrect.");
+        }
+
+        var newHash = _hasher.Hash(newPassword);
+        user.UpdatePassword(newHash);
+        await _users.UpdateAsync(user, ct);
+
+        // Revoke all sessions so the user must log in again with the new password.
+        await _tokens.RevokeAllByUserIdAsync(userId, "password_changed", ct);
+        _logger.LogInformation("Password changed for user {UserId}", userId);
+        return Result.Ok();
+    }
+
+    public async Task<Result> RequestEmailChangeAsync(
+        Guid userId, string newEmail, CancellationToken ct = default)
+    {
+        var normalizedNew = newEmail.Trim().ToUpperInvariant();
+        var user = await _users.GetByIdAsync(userId, ct);
+        if (user is null) return Result.Fail("General.NotFound", "User not found.");
+
+        if (user.NormalizedEmail == normalizedNew)
+            return Result.Fail("Auth.EmailUnchanged", "New email is the same as the current email.");
+
+        if (await _users.ExistsByEmailAsync(normalizedNew, ct))
+            return Result.Fail("Auth.EmailTaken", "That email address is already in use.");
+
+        // Re-use the verification token flow with PendingEmail so VerifyEmailAsync applies the change.
+        await _verificationTokens.InvalidateAllForUserAsync(userId, ct);
+        var rawToken = _tokenService.GenerateRawRefreshToken();
+        var tokenHash = _tokenService.HashToken(rawToken);
+        var verificationToken = EmailVerificationToken.Create(userId, tokenHash, pendingEmail: newEmail.Trim());
+        await _verificationTokens.AddAsync(verificationToken, ct);
+
+        var verifyUrl = $"{_emailOptions.AppUrl}/verify-email/confirm?token={Uri.EscapeDataString(rawToken)}";
+        await _email.SendVerificationEmailAsync(newEmail.Trim(), user.DisplayName, verifyUrl, ct);
+        _logger.LogInformation("Email-change verification sent for user {UserId}", userId);
+        return Result.Ok();
+    }
+
+    public async Task<Result<IReadOnlyList<SessionDto>>> GetActiveSessionsAsync(
+        Guid userId, string? rawRefreshToken, CancellationToken ct = default)
+    {
+        var currentHash = rawRefreshToken is not null ? _tokenService.HashToken(rawRefreshToken) : null;
+        var tokens = await _tokens.GetActiveByUserIdAsync(userId, ct);
+        var dtos = tokens.Select(t => new SessionDto(
+            Id: t.Id,
+            IpAddress: t.CreatedByIp,
+            UserAgent: t.UserAgent,
+            CreatedAt: t.CreatedAt,
+            ExpiresAt: t.ExpiresAt,
+            IsCurrent: currentHash is not null && t.TokenHash == currentHash))
+            .OrderByDescending(s => s.CreatedAt)
+            .ToList();
+        return Result<IReadOnlyList<SessionDto>>.Ok(dtos);
+    }
+
+    public async Task<Result> RevokeSessionAsync(Guid userId, Guid sessionId, CancellationToken ct = default)
+    {
+        var token = await _tokens.GetByIdAsync(sessionId, ct);
+        if (token is null || token.UserId != userId)
+            return Result.Fail("General.NotFound", "Session not found.");
+        if (!token.IsActive)
+            return Result.Fail("Auth.SessionInactive", "Session is already inactive.");
+
+        token.Revoke(string.Empty, "user_revoked");
+        await _tokens.UpdateAsync(token, ct);
+        _logger.LogInformation("Session {SessionId} revoked by user {UserId}", sessionId, userId);
+        return Result.Ok();
+    }
+
+    public async Task<Result> DeleteAccountAsync(Guid userId, string password, CancellationToken ct = default)
+    {
+        var user = await _users.GetByIdAsync(userId, ct);
+        if (user is null) return Result.Fail("General.NotFound", "User not found.");
+
+        if (!string.IsNullOrEmpty(user.PasswordHash) && !_hasher.Verify(password, user.PasswordHash))
+            return Result.Fail("Auth.InvalidCredentials", "Password is incorrect.");
+
+        await _tokens.RevokeAllByUserIdAsync(userId, "account_deleted", ct);
+        await _users.DeleteAsync(user, ct);
+        _logger.LogInformation("Account deleted for user {UserId}", userId);
+        return Result.Ok();
     }
 
     private static UserDto ToDto(User user) => new(

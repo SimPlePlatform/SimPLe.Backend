@@ -18,4 +18,10 @@ public interface IAuthService
     Task<Result> VerifyEmailAsync(string rawToken, CancellationToken ct = default);
     Task<Result> ForgotPasswordAsync(string email, CancellationToken ct = default);
     Task<Result> ResetPasswordAsync(string rawToken, string newPassword, CancellationToken ct = default);
+
+    Task<Result> ChangePasswordAsync(Guid userId, string currentPassword, string newPassword, CancellationToken ct = default);
+    Task<Result> RequestEmailChangeAsync(Guid userId, string newEmail, CancellationToken ct = default);
+    Task<Result<IReadOnlyList<SessionDto>>> GetActiveSessionsAsync(Guid userId, string? rawRefreshToken, CancellationToken ct = default);
+    Task<Result> RevokeSessionAsync(Guid userId, Guid sessionId, CancellationToken ct = default);
+    Task<Result> DeleteAccountAsync(Guid userId, string password, CancellationToken ct = default);
 }
