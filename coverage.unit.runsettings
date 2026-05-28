@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<RunSettings>
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="XPlat code coverage">
+        <Configuration>
+          <Format>cobertura</Format>
+          <Exclude>
+            [SimPle.Infrastructure]SimPle.Infrastructure.Migrations.*,
+            [SimPle.Infrastructure]SimPle.Infrastructure.Persistence.*,
+            [SimPle.Infrastructure]SimPle.Infrastructure.Email.*,
+            [SimPle.Infrastructure]SimPle.Infrastructure.DependencyInjection,
+            [SimPle.Application]SimPle.Application.DependencyInjection,
+            [SimPle.Domain]SimPle.Domain.Chat.*,
+            [SimPle.Domain]SimPle.Domain.Friends.*,
+            [SimPle.Domain]SimPle.Domain.GameHost.*,
+            [SimPle.Domain]SimPle.Domain.Games.*,
+            [SimPle.Domain]SimPle.Domain.Hardware.*,
+            [SimPle.Domain]SimPle.Domain.Lobbies.*,
+            [SimPle.Domain]SimPle.Domain.Notifications.*
+          </Exclude>
+          <ExcludeByAttribute>GeneratedCodeAttribute,CompilerGeneratedAttribute,ExcludeFromCodeCoverageAttribute</ExcludeByAttribute>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+</RunSettings>
