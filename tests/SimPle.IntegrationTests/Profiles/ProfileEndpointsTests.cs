@@ -35,6 +35,7 @@ public sealed class ProfileEndpointsTests : IDisposable
         var body = await response.Content.ReadAsStringAsync();
         body.Should().Contain($"\"username\":\"{username}\"");
         body.Should().Contain("\"visibility\":\"Public\"");
+        body.Should().Contain("\"profileType\":\"Gamer\"");
         body.Should().NotContain("email");
         body.Should().NotContain("passwordHash");
         body.Should().NotContain("failedLoginCount");
@@ -71,7 +72,8 @@ public sealed class ProfileEndpointsTests : IDisposable
             BannerUrl = (string?)null,
             Region = "NA-East",
             StatusMessage = "Testing!",
-            Visibility = "Private"
+            Visibility = "Private",
+            ProfileType = "Developer"
         });
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -80,6 +82,8 @@ public sealed class ProfileEndpointsTests : IDisposable
         body.Should().Contain("Hello from integration test");
         body.Should().Contain("NA-East");
         body.Should().Contain("Private");
+        body.Should().Contain("Developer");
+        body.Should().Contain("\"role\":\"Player\"");
     }
 
     [Fact]
@@ -286,6 +290,23 @@ public sealed class ProfileEndpointsTests : IDisposable
     }
 
     [Fact]
+    public async Task UpdateMe_InvalidProfileType_Returns400()
+    {
+        using var client = CreateClient();
+        var (email, username) = UniqueUser();
+        await RegisterAndLoginAsync(client, email, username);
+
+        var response = await client.PutAsJsonAsync("/api/profile/me", new
+        {
+            DisplayName = "Test User",
+            Visibility = "Public",
+            ProfileType = "Admin"
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
     public async Task UpdateMe_CannotModifyEmail_OrAuthFields()
     {
         using var client = CreateClient();
@@ -456,6 +477,53 @@ public sealed class ProfileEndpointsTests : IDisposable
         });
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task UpdateLinks_NonHttpsUrl_Returns400()
+    {
+        using var client = CreateClient();
+        var (email, username) = UniqueUser();
+        await RegisterAndLoginAsync(client, email, username);
+
+        var response = await client.PutAsJsonAsync("/api/profile/me/links", new
+        {
+            Links = new[] { new { Platform = "github", Url = "http://github.com/testuser", DisplayLabel = (string?)null, SortOrder = 0 } }
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task GetPublicProfile_PublicUser_IncludesLinksAndProfileType()
+    {
+        using var ownerClient = CreateClient();
+        var (email, username) = UniqueUser();
+        await RegisterAndLoginAsync(ownerClient, email, username);
+        await ownerClient.PutAsJsonAsync("/api/profile/me", new
+        {
+            DisplayName = "Developer User",
+            Visibility = "Public",
+            ProfileType = "Developer"
+        });
+        await ownerClient.PutAsJsonAsync("/api/profile/me/links", new
+        {
+            Links = new[]
+            {
+                new { Platform = "github", Url = "https://github.com/testuser", DisplayLabel = "Code", SortOrder = 0 },
+                new { Platform = "twitter", Url = "https://x.com/testuser", DisplayLabel = "X", SortOrder = 1 },
+            }
+        });
+
+        using var anonClient = CreateClient();
+        var response = await anonClient.GetAsync($"/api/profile/{username}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("\"profileType\":\"Developer\"");
+        body.Should().Contain("github");
+        body.Should().Contain("xtwitter");
+        body.Should().Contain("https://github.com/testuser");
     }
 
     // ── Interests ─────────────────────────────────────────────────────────────

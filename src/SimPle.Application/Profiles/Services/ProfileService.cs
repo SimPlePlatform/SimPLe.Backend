@@ -68,6 +68,11 @@ public sealed class ProfileService : IProfileService
             Enum.TryParse<ProfileVisibility>(request.Visibility, out var parsed))
             visibility = parsed;
 
+        ProfileType? profileType = null;
+        if (request.ProfileType is not null &&
+            Enum.TryParse<ProfileType>(request.ProfileType, out var parsedType))
+            profileType = parsedType;
+
         user.UpdateProfile(
             request.DisplayName,
             request.Bio,
@@ -75,7 +80,8 @@ public sealed class ProfileService : IProfileService
             request.BannerUrl,
             request.Region,
             request.StatusMessage,
-            visibility);
+            visibility,
+            profileType);
 
         await _users.UpdateAsync(user, ct);
         return await BuildDtoAsync(user, ct);
@@ -321,6 +327,7 @@ public sealed class ProfileService : IProfileService
             Color: user.Color,
             Initials: user.Initials,
             Visibility: user.Visibility.ToString(),
+            ProfileType: user.ProfileType.ToString(),
             Role: user.Role.ToString(),
             Level: user.Level,
             Elo: user.Elo,

@@ -31,6 +31,7 @@ public class User : Entity
     // Profile social identity
     public string? StatusMessage { get; private set; }
     public ProfileVisibility Visibility { get; private set; } = ProfileVisibility.Public;
+    public ProfileType ProfileType { get; private set; } = ProfileType.Gamer;
 
     // Auth security fields
     public int FailedLoginCount { get; private set; }
@@ -85,7 +86,8 @@ public class User : Entity
     public void UpdateProfile(
         string displayName, string? bio, string? avatarUrl, string? bannerUrl,
         string? region = null, string? statusMessage = null,
-        ProfileVisibility? visibility = null)
+        ProfileVisibility? visibility = null,
+        ProfileType? profileType = null)
     {
         DisplayName = displayName;
         Bio = bio;
@@ -95,6 +97,7 @@ public class User : Entity
         if (region is not null) Region = region;
         StatusMessage = statusMessage;
         if (visibility.HasValue) Visibility = visibility.Value;
+        if (profileType.HasValue) ProfileType = profileType.Value;
         Touch();
     }
 
@@ -196,3 +199,4 @@ public enum UserStatus { Offline, Online, Away, Playing, InLobby }
 public enum UserRole { Player, Moderator, Admin }
 public enum SubscriptionTier { Free, Plus, Pro }
 public enum ProfileVisibility { Public, FriendsOnly, Private }
+public enum ProfileType { Gamer, Developer }

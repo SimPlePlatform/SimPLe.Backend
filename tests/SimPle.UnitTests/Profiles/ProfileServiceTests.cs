@@ -55,6 +55,7 @@ public sealed class ProfileServiceTests
         result.Value!.UserId.Should().Be(user.Id);
         result.Value.Username.Should().Be("testuser");
         result.Value.Visibility.Should().Be("Public");
+        result.Value.ProfileType.Should().Be("Gamer");
     }
 
     [Fact]
@@ -146,13 +147,16 @@ public sealed class ProfileServiceTests
             BannerUrl: null,
             Region: "NA-East",
             StatusMessage: "Playing!",
-            Visibility: "FriendsOnly"));
+            Visibility: "FriendsOnly",
+            ProfileType: "Developer"));
 
         result.IsSuccess.Should().BeTrue();
         result.Value!.DisplayName.Should().Be("Updated Name");
         result.Value.Bio.Should().Be("My bio");
         result.Value.StatusMessage.Should().Be("Playing!");
         result.Value.Visibility.Should().Be("FriendsOnly");
+        result.Value.ProfileType.Should().Be("Developer");
+        result.Value.Role.Should().Be("Player");
         await _users.Received(1).UpdateAsync(Arg.Any<User>());
     }
 
@@ -164,7 +168,7 @@ public sealed class ProfileServiceTests
 
         // If the visibility string doesn't parse, the enum stays at its current value.
         var result = await _service.UpdateProfileAsync(user.Id, new UpdateProfileRequestDto(
-            "Name", null, null, null, null, null, "InvalidEnum"));
+            "Name", null, null, null, null, null, "InvalidEnum", null));
 
         result.IsSuccess.Should().BeTrue();
         result.Value!.Visibility.Should().Be("Public"); // unchanged default
@@ -252,7 +256,7 @@ public sealed class ProfileServiceTests
         string displayName, string? bio, string? avatarUrl, string? bannerUrl)
     {
         var validator = new UpdateProfileRequestValidator();
-        var dto = new UpdateProfileRequestDto(displayName, bio, avatarUrl, bannerUrl, null, null, null);
+        var dto = new UpdateProfileRequestDto(displayName, bio, avatarUrl, bannerUrl, null, null, null, null);
         var result = await validator.ValidateAsync(dto, CancellationToken.None);
         result.IsValid.Should().BeFalse();
     }
@@ -263,7 +267,7 @@ public sealed class ProfileServiceTests
         var validator = new UpdateProfileRequestValidator();
         var dto = new UpdateProfileRequestDto(
             "Test User", "Bio text", "https://example.com/avatar.png",
-            null, "EU-West", null, "Public");
+            null, "EU-West", null, "Public", "Gamer");
         var result = await validator.ValidateAsync(dto, CancellationToken.None);
         result.IsValid.Should().BeTrue();
     }
@@ -451,6 +455,64 @@ public sealed class ProfileServiceTests
         var validator = new UpdateLinksRequestValidator();
         var dto = new UpdateLinksRequestDto([new LinkItemDto("fakebook", "https://fb.com", null, 0)]);
         var result = await validator.ValidateAsync(dto, CancellationToken.None);
+        result.IsValid.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("http://github.com/test")]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("data:text/html,hello")]
+    [InlineData("file:///tmp/avatar.png")]
+    public async Task LinksValidator_NonHttpsOrDangerousUrl_HasErrors(string url)
+    {
+        var validator = new UpdateLinksRequestValidator();
+        var dto = new UpdateLinksRequestDto([new LinkItemDto("github", url, null, 0)]);
+        var result = await validator.ValidateAsync(dto, CancellationToken.None);
+        result.IsValid.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task LinksValidator_DuplicatePlatformAndUrl_HasErrors()
+    {
+        var validator = new UpdateLinksRequestValidator();
+        var dto = new UpdateLinksRequestDto(
+        [
+            new LinkItemDto("github", "https://github.com/test", null, 0),
+            new LinkItemDto("GitHub", "https://github.com/test/", null, 1)
+        ]);
+
+        var result = await validator.ValidateAsync(dto, CancellationToken.None);
+
+        result.IsValid.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task LinksValidator_MaxLinks_Enforced()
+    {
+        var validator = new UpdateLinksRequestValidator();
+        var dto = new UpdateLinksRequestDto(
+        [
+            new LinkItemDto("github", "https://github.com/a", null, 0),
+            new LinkItemDto("xtwitter", "https://x.com/a", null, 1),
+            new LinkItemDto("instagram", "https://instagram.com/a", null, 2),
+            new LinkItemDto("discord", "https://discord.com/users/a", null, 3),
+            new LinkItemDto("website", "https://example.com", null, 4),
+            new LinkItemDto("website", "https://example.org", null, 5)
+        ]);
+
+        var result = await validator.ValidateAsync(dto, CancellationToken.None);
+
+        result.IsValid.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task UpdateProfileValidator_InvalidProfileType_HasErrors()
+    {
+        var validator = new UpdateProfileRequestValidator();
+        var dto = new UpdateProfileRequestDto("Test User", null, null, null, null, null, "Public", "Admin");
+
+        var result = await validator.ValidateAsync(dto, CancellationToken.None);
+
         result.IsValid.Should().BeFalse();
     }
 

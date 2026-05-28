@@ -14,6 +14,7 @@ public sealed record ProfileDto(
     string Color,
     string Initials,
     string Visibility,   // "Public" | "FriendsOnly" | "Private"
+    string ProfileType,  // "Gamer" | "Developer"
     string Role,
     int Level,
     int Elo,
