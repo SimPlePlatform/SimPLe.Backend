@@ -10,15 +10,19 @@ namespace SimPle.Infrastructure.Storage;
 public sealed class S3FileStorageService : IFileStorageService
 {
     private readonly IAmazonS3 _client;
-    private readonly AwsOptions _options;
+    private readonly StorageOptions _options;
 
-    public S3FileStorageService(IOptions<AwsOptions> options)
+    public S3FileStorageService(IOptions<StorageOptions> options) : this(options.Value, null)
     {
-        _options = options.Value;
-        var region = RegionEndpoint.GetBySystemName(_options.Region);
-        _client = string.IsNullOrWhiteSpace(_options.AccessKeyId)
-            ? new AmazonS3Client(region)
-            : new AmazonS3Client(_options.AccessKeyId, _options.SecretAccessKey, region);
+    }
+
+    public S3FileStorageService(StorageOptions options, IAmazonS3? client)
+    {
+        _options = options;
+        var config = BuildClientConfig(_options);
+        _client = client ?? (string.IsNullOrWhiteSpace(_options.AccessKey)
+            ? new AmazonS3Client(config)
+            : new AmazonS3Client(_options.AccessKey, _options.SecretKey, config));
     }
 
     public Task<string> CreatePresignedPutUrlAsync(
@@ -29,7 +33,7 @@ public sealed class S3FileStorageService : IFileStorageService
     {
         var request = new PutObjectRequest
         {
-            BucketName = _options.S3BucketName,
+            BucketName = _options.BucketName,
             Key = objectKey,
             ContentType = contentType,
         };
@@ -53,7 +57,7 @@ public sealed class S3FileStorageService : IFileStorageService
     {
         var url = _client.GetPreSignedURL(new GetPreSignedUrlRequest
         {
-            BucketName = _options.S3BucketName,
+            BucketName = _options.BucketName,
             Key = objectKey,
             Verb = HttpVerb.GET,
             Expires = DateTime.UtcNow.Add(expiresIn)
@@ -68,7 +72,7 @@ public sealed class S3FileStorageService : IFileStorageService
         {
             await _client.GetObjectMetadataAsync(new GetObjectMetadataRequest
             {
-                BucketName = _options.S3BucketName,
+                BucketName = _options.BucketName,
                 Key = objectKey,
             }, ct);
             return true;
@@ -83,8 +87,25 @@ public sealed class S3FileStorageService : IFileStorageService
     {
         await _client.DeleteObjectAsync(new DeleteObjectRequest
         {
-            BucketName = _options.S3BucketName,
+            BucketName = _options.BucketName,
             Key = objectKey,
         }, ct);
+    }
+
+    public static AmazonS3Config BuildClientConfig(StorageOptions options)
+    {
+        var config = new AmazonS3Config
+        {
+            RegionEndpoint = RegionEndpoint.GetBySystemName(options.Region),
+            ForcePathStyle = options.ForcePathStyle,
+        };
+
+        if (!string.IsNullOrWhiteSpace(options.ServiceUrl))
+        {
+            config.ServiceURL = options.ServiceUrl;
+            config.AuthenticationRegion = options.Region;
+        }
+
+        return config;
     }
 }

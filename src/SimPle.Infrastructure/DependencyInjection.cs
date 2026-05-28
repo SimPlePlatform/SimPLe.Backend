@@ -37,10 +37,10 @@ public static class DependencyInjection
         services.AddScoped<IGoogleTokenValidationService, GoogleTokenValidationService>();
         services.AddScoped<IProfileRepository, ProfileRepository>();
         services.AddScoped<IUsernameChangeRequestRepository, UsernameChangeRequestRepository>();
-        services.Configure<AwsOptions>(configuration.GetSection(AwsOptions.SectionName));
-        services.PostConfigure<AwsOptions>(options =>
+        services.Configure<StorageOptions>(configuration.GetSection(StorageOptions.SectionName));
+        services.PostConfigure<StorageOptions>(options =>
         {
-            ApplyAwsEnvironmentFallbacks(options, configuration);
+            ApplyStorageEnvironmentFallbacks(options, configuration);
         });
         services.AddScoped<IFileStorageService, S3FileStorageService>();
         services.AddHttpClient<ICaptchaVerificationService, GoogleRecaptchaV2Service>();
@@ -52,14 +52,20 @@ public static class DependencyInjection
         return services;
     }
 
-    private static void ApplyAwsEnvironmentFallbacks(AwsOptions options, IConfiguration configuration)
+    private static void ApplyStorageEnvironmentFallbacks(StorageOptions options, IConfiguration configuration)
     {
-        options.Region = configuration["AWS_REGION"] ?? options.Region;
-        options.S3BucketName = configuration["AWS_S3_BUCKET_NAME"] ?? options.S3BucketName;
-        options.S3ProfilePrefix = configuration["AWS_S3_PROFILE_PREFIX"] ?? options.S3ProfilePrefix;
-        if (int.TryParse(configuration["AWS_S3_UPLOAD_URL_EXPIRY_MINUTES"], out var upload))
-            options.S3UploadUrlExpiryMinutes = upload;
-        if (int.TryParse(configuration["AWS_S3_READ_URL_EXPIRY_MINUTES"], out var read))
-            options.S3ReadUrlExpiryMinutes = read;
+        options.Provider = configuration["Storage__Provider"] ?? options.Provider;
+        options.BucketName = configuration["Storage__BucketName"] ?? options.BucketName;
+        options.Region = configuration["Storage__Region"] ?? options.Region;
+        options.ServiceUrl = configuration["Storage__ServiceUrl"] ?? options.ServiceUrl;
+        options.AccessKey = configuration["Storage__AccessKey"] ?? options.AccessKey;
+        options.SecretKey = configuration["Storage__SecretKey"] ?? options.SecretKey;
+        options.ProfilePrefix = configuration["Storage__ProfilePrefix"] ?? options.ProfilePrefix;
+        if (bool.TryParse(configuration["Storage__ForcePathStyle"], out var forcePathStyle))
+            options.ForcePathStyle = forcePathStyle;
+        if (int.TryParse(configuration["Storage__UploadUrlExpiryMinutes"], out var upload))
+            options.UploadUrlExpiryMinutes = upload;
+        if (int.TryParse(configuration["Storage__ReadUrlExpiryMinutes"], out var read))
+            options.ReadUrlExpiryMinutes = read;
     }
 }

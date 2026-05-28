@@ -14,7 +14,7 @@ public sealed class ProfileService : IProfileService
     private readonly IProfileRepository _profiles;
     private readonly IUsernameChangeRequestRepository _usernameRequests;
     private readonly IFileStorageService _storage;
-    private readonly AwsOptions _aws;
+    private readonly StorageOptions _storageOptions;
 
     private static readonly HashSet<string> AllowedImageTypes =
         new(StringComparer.OrdinalIgnoreCase) { "image/jpeg", "image/png", "image/webp" };
@@ -24,13 +24,13 @@ public sealed class ProfileService : IProfileService
         IProfileRepository profiles,
         IUsernameChangeRequestRepository usernameRequests,
         IFileStorageService storage,
-        IOptions<AwsOptions> awsOptions)
+        IOptions<StorageOptions> storageOptions)
     {
         _users = users;
         _profiles = profiles;
         _usernameRequests = usernameRequests;
         _storage = storage;
-        _aws = awsOptions.Value;
+        _storageOptions = storageOptions.Value;
     }
 
     public async Task<Result<ProfileDto>> GetMyProfileAsync(Guid userId, CancellationToken ct = default)
@@ -240,12 +240,12 @@ public sealed class ProfileService : IProfileService
         if (extension is null)
             return Result<ProfileMediaUploadUrlDto>.Fail("Validation.Failed", "Unsupported image type.");
 
-        var objectKey = $"{_aws.S3ProfilePrefix.Trim('/')}/users/{userId}/{mediaKind}/{Guid.NewGuid():N}{extension}";
-        var expires = DateTime.UtcNow.AddMinutes(_aws.S3UploadUrlExpiryMinutes);
+        var objectKey = $"{_storageOptions.ProfilePrefix.Trim('/')}/users/{userId}/{mediaKind}/{Guid.NewGuid():N}{extension}";
+        var expires = DateTime.UtcNow.AddMinutes(_storageOptions.UploadUrlExpiryMinutes);
         var uploadUrl = await _storage.CreatePresignedPutUrlAsync(
             objectKey,
             request.ContentType,
-            TimeSpan.FromMinutes(_aws.S3UploadUrlExpiryMinutes),
+            TimeSpan.FromMinutes(_storageOptions.UploadUrlExpiryMinutes),
             ct);
 
         return Result<ProfileMediaUploadUrlDto>.Ok(new(uploadUrl, objectKey, request.ContentType, expires));
@@ -260,7 +260,7 @@ public sealed class ProfileService : IProfileService
         var user = await _users.GetByIdAsync(userId, ct);
         if (user is null) return Result<ProfileDto>.Fail("General.NotFound", "User not found.");
 
-        var expectedPrefix = $"{_aws.S3ProfilePrefix.Trim('/')}/users/{userId}/{mediaKind}/";
+        var expectedPrefix = $"{_storageOptions.ProfilePrefix.Trim('/')}/users/{userId}/{mediaKind}/";
         if (!objectKey.StartsWith(expectedPrefix, StringComparison.Ordinal))
             return Result<ProfileDto>.Fail("Validation.Failed", "The uploaded object does not belong to the current user.");
 
@@ -299,7 +299,7 @@ public sealed class ProfileService : IProfileService
         IReadOnlyList<ProfileInterestTag> interests,
         CancellationToken ct)
     {
-        var readExpiry = TimeSpan.FromMinutes(_aws.S3ReadUrlExpiryMinutes);
+        var readExpiry = TimeSpan.FromMinutes(_storageOptions.ReadUrlExpiryMinutes);
         var avatarUrl = !string.IsNullOrWhiteSpace(user.AvatarObjectKey)
             ? await _storage.CreatePresignedReadUrlAsync(user.AvatarObjectKey, readExpiry, ct)
             : user.AvatarUrl;
