@@ -9,63 +9,82 @@ namespace SimPle.Infrastructure.Storage;
 
 public sealed class S3FileStorageService : IFileStorageService
 {
-    private readonly AmazonS3Client _client;
+    private readonly IAmazonS3 _client;
     private readonly AwsOptions _options;
 
     public S3FileStorageService(IOptions<AwsOptions> options)
     {
         _options = options.Value;
-        _client = new AmazonS3Client(
-            _options.AccessKeyId,
-            _options.SecretAccessKey,
-            RegionEndpoint.GetBySystemName(_options.Region));
+        var region = RegionEndpoint.GetBySystemName(_options.Region);
+        _client = string.IsNullOrWhiteSpace(_options.AccessKeyId)
+            ? new AmazonS3Client(region)
+            : new AmazonS3Client(_options.AccessKeyId, _options.SecretAccessKey, region);
     }
 
-    public async Task<string> UploadAsync(
-        Stream content, string fileName, string contentType, CancellationToken ct = default)
+    public Task<string> CreatePresignedPutUrlAsync(
+        string objectKey,
+        string contentType,
+        TimeSpan expiresIn,
+        CancellationToken ct = default)
     {
         var request = new PutObjectRequest
         {
             BucketName = _options.S3BucketName,
-            Key = fileName,
-            InputStream = content,
+            Key = objectKey,
             ContentType = contentType,
-            CannedACL = S3CannedACL.PublicRead,
         };
 
-        await _client.PutObjectAsync(request, ct);
-        return BuildPublicUrl(fileName);
+        var url = _client.GetPreSignedURL(new GetPreSignedUrlRequest
+        {
+            BucketName = request.BucketName,
+            Key = request.Key,
+            Verb = HttpVerb.PUT,
+            ContentType = request.ContentType,
+            Expires = DateTime.UtcNow.Add(expiresIn)
+        });
+
+        return Task.FromResult(url);
     }
 
-    public async Task DeleteAsync(string publicUrl, CancellationToken ct = default)
+    public Task<string> CreatePresignedReadUrlAsync(
+        string objectKey,
+        TimeSpan expiresIn,
+        CancellationToken ct = default)
     {
-        var key = ExtractKey(publicUrl);
-        if (key is null) return;
+        var url = _client.GetPreSignedURL(new GetPreSignedUrlRequest
+        {
+            BucketName = _options.S3BucketName,
+            Key = objectKey,
+            Verb = HttpVerb.GET,
+            Expires = DateTime.UtcNow.Add(expiresIn)
+        });
 
+        return Task.FromResult(url);
+    }
+
+    public async Task<bool> ObjectExistsAsync(string objectKey, CancellationToken ct = default)
+    {
+        try
+        {
+            await _client.GetObjectMetadataAsync(new GetObjectMetadataRequest
+            {
+                BucketName = _options.S3BucketName,
+                Key = objectKey,
+            }, ct);
+            return true;
+        }
+        catch (AmazonS3Exception ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return false;
+        }
+    }
+
+    public async Task DeleteObjectAsync(string objectKey, CancellationToken ct = default)
+    {
         await _client.DeleteObjectAsync(new DeleteObjectRequest
         {
             BucketName = _options.S3BucketName,
-            Key = key,
+            Key = objectKey,
         }, ct);
-    }
-
-    private string BuildPublicUrl(string key)
-    {
-        if (!string.IsNullOrEmpty(_options.S3PublicUrlBase))
-            return $"{_options.S3PublicUrlBase.TrimEnd('/')}/{key}";
-
-        return $"https://{_options.S3BucketName}.s3.{_options.Region}.amazonaws.com/{key}";
-    }
-
-    private string? ExtractKey(string publicUrl)
-    {
-        if (!string.IsNullOrEmpty(_options.S3PublicUrlBase) &&
-            publicUrl.StartsWith(_options.S3PublicUrlBase, StringComparison.OrdinalIgnoreCase))
-            return publicUrl[(publicUrl.LastIndexOf('/') + 1)..];
-
-        var expectedPrefix = $"https://{_options.S3BucketName}.s3";
-        if (!publicUrl.Contains(_options.S3BucketName)) return null;
-        var lastSlash = publicUrl.LastIndexOf('/');
-        return lastSlash >= 0 ? publicUrl[(lastSlash + 1)..] : null;
     }
 }

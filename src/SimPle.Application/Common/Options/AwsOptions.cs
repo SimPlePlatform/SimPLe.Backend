@@ -4,10 +4,11 @@ public sealed class AwsOptions
 {
     public const string SectionName = "AWS";
 
-    public string AccessKeyId { get; init; } = string.Empty;
-    public string SecretAccessKey { get; init; } = string.Empty;
-    public string Region { get; init; } = "us-east-1";
-    public string S3BucketName { get; init; } = string.Empty;
-    /// <summary>Optional custom public URL prefix (e.g. CloudFront domain). Defaults to S3 path-style URL.</summary>
-    public string? S3PublicUrlBase { get; init; }
+    public string AccessKeyId { get; set; } = string.Empty;
+    public string SecretAccessKey { get; set; } = string.Empty;
+    public string Region { get; set; } = "us-east-1";
+    public string S3BucketName { get; set; } = string.Empty;
+    public string S3ProfilePrefix { get; set; } = "profile-assets";
+    public int S3UploadUrlExpiryMinutes { get; set; } = 10;
+    public int S3ReadUrlExpiryMinutes { get; set; } = 15;
 }

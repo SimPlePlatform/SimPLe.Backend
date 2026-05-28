@@ -2,17 +2,18 @@ namespace SimPle.Application.Common.Interfaces;
 
 public interface IFileStorageService
 {
-    /// <summary>
-    /// Uploads a stream to storage and returns the public URL.
-    /// </summary>
-    Task<string> UploadAsync(
-        Stream content,
-        string fileName,
+    Task<string> CreatePresignedPutUrlAsync(
+        string objectKey,
         string contentType,
+        TimeSpan expiresIn,
         CancellationToken ct = default);
 
-    /// <summary>
-    /// Deletes an object by its full public URL. No-op if the URL is not in this bucket.
-    /// </summary>
-    Task DeleteAsync(string publicUrl, CancellationToken ct = default);
+    Task<string> CreatePresignedReadUrlAsync(
+        string objectKey,
+        TimeSpan expiresIn,
+        CancellationToken ct = default);
+
+    Task<bool> ObjectExistsAsync(string objectKey, CancellationToken ct = default);
+
+    Task DeleteObjectAsync(string objectKey, CancellationToken ct = default);
 }

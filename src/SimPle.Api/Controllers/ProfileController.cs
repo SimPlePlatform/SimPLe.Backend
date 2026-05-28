@@ -2,7 +2,6 @@ using System.IdentityModel.Tokens.Jwt;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using SimPle.Api.Models;
-using SimPle.Application.Common.Interfaces;
 using SimPle.Application.Profiles.DTOs;
 using SimPle.Application.Profiles.Services;
 using SimPle.Application.Profiles.Validators;
@@ -17,15 +16,10 @@ namespace SimPle.Api.Controllers;
 public sealed class ProfileController : ControllerBase
 {
     private readonly IProfileService _profile;
-    private readonly IFileStorageService _storage;
 
-    private static readonly string[] AllowedImageTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
-    private const long MaxAvatarBytes = 5 * 1024 * 1024; // 5 MB
-
-    public ProfileController(IProfileService profile, IFileStorageService storage)
+    public ProfileController(IProfileService profile)
     {
         _profile = profile;
-        _storage = storage;
     }
 
     // ── Current user profile ──────────────────────────────────────────────────
@@ -119,76 +113,124 @@ public sealed class ProfileController : ControllerBase
 
     // ── Avatar / banner upload ────────────────────────────────────────────────
 
-    [HttpPost("me/avatar")]
+    [HttpPost("me/avatar/upload-url")]
     [Authorize]
-    [RequestSizeLimit(6 * 1024 * 1024)]
-    [SwaggerOperation(Summary = "Upload a new avatar image (max 5 MB, JPEG/PNG/WebP/GIF)",
-        OperationId = "Profile_UploadAvatar", Tags = new[] { "Profile" })]
-    [ProducesResponseType(typeof(ProfileDto), StatusCodes.Status200OK)]
+    [SwaggerOperation(Summary = "Create a presigned upload URL for an avatar image",
+        OperationId = "Profile_CreateAvatarUploadUrl", Tags = new[] { "Profile" })]
+    [ProducesResponseType(typeof(ProfileMediaUploadUrlDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> UploadAvatar(IFormFile file, CancellationToken ct)
+    public async Task<IActionResult> CreateAvatarUploadUrl(
+        [FromBody] ProfileMediaUploadUrlRequestDto request, CancellationToken ct)
     {
         if (!HasCsrfHeader()) return MissingCsrfHeader();
         if (!TryGetUserId(out var userId)) return Unauthorized();
 
-        if (file is null || file.Length == 0)
-            return BadRequest(Error("Validation.Failed", "No file provided."));
-        if (file.Length > MaxAvatarBytes)
-            return BadRequest(Error("Validation.Failed", "Avatar must be 5 MB or smaller."));
-        if (!AllowedImageTypes.Contains(file.ContentType.ToLowerInvariant()))
-            return BadRequest(Error("Validation.Failed", "Only JPEG, PNG, WebP, and GIF images are accepted."));
-
-        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
-        var key = $"avatars/{userId}/{Guid.NewGuid():N}{ext}";
-
-        await using var stream = file.OpenReadStream();
-        var url = await _storage.UploadAsync(stream, key, file.ContentType, ct);
-
-        var profile = await _profile.GetMyProfileAsync(userId, ct);
-        if (!profile.IsSuccess) return NotFound(Error("General.NotFound", "User not found."));
-
-        var result = await _profile.UpdateProfileAsync(userId, new UpdateProfileRequestDto(
-            profile.Value!.DisplayName, profile.Value.Bio, url, profile.Value.BannerUrl,
-            profile.Value.Region, profile.Value.StatusMessage, profile.Value.Visibility), ct);
-
+        var result = await _profile.CreateAvatarUploadUrlAsync(userId, request, ct);
         if (!result.IsSuccess) return BadRequest(Error(result.Error!.Code, result.Error.Message));
         return Ok(result.Value);
     }
 
-    [HttpPost("me/banner")]
+    [HttpPost("me/avatar/confirm")]
     [Authorize]
-    [RequestSizeLimit(10 * 1024 * 1024)]
-    [SwaggerOperation(Summary = "Upload a new banner/cover image (max 8 MB, JPEG/PNG/WebP)",
-        OperationId = "Profile_UploadBanner", Tags = new[] { "Profile" })]
+    [SwaggerOperation(Summary = "Confirm an uploaded avatar image and attach it to the profile",
+        OperationId = "Profile_ConfirmAvatarUpload", Tags = new[] { "Profile" })]
     [ProducesResponseType(typeof(ProfileDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> UploadBanner(IFormFile file, CancellationToken ct)
+    public async Task<IActionResult> ConfirmAvatarUpload(
+        [FromBody] ConfirmProfileMediaUploadRequestDto request, CancellationToken ct)
     {
         if (!HasCsrfHeader()) return MissingCsrfHeader();
         if (!TryGetUserId(out var userId)) return Unauthorized();
 
-        if (file is null || file.Length == 0)
-            return BadRequest(Error("Validation.Failed", "No file provided."));
-        if (file.Length > 8 * 1024 * 1024)
-            return BadRequest(Error("Validation.Failed", "Banner must be 8 MB or smaller."));
-        if (!AllowedImageTypes.Contains(file.ContentType.ToLowerInvariant()))
-            return BadRequest(Error("Validation.Failed", "Only JPEG, PNG, WebP, and GIF images are accepted."));
+        var result = await _profile.ConfirmAvatarUploadAsync(userId, request.ObjectKey, ct);
+        if (!result.IsSuccess) return BadRequest(Error(result.Error!.Code, result.Error.Message));
+        return Ok(result.Value);
+    }
 
-        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
-        var key = $"banners/{userId}/{Guid.NewGuid():N}{ext}";
+    [HttpDelete("me/avatar")]
+    [Authorize]
+    [SwaggerOperation(Summary = "Remove the authenticated user's avatar image",
+        OperationId = "Profile_RemoveAvatar", Tags = new[] { "Profile" })]
+    [ProducesResponseType(typeof(ProfileDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> RemoveAvatar(CancellationToken ct)
+    {
+        if (!HasCsrfHeader()) return MissingCsrfHeader();
+        if (!TryGetUserId(out var userId)) return Unauthorized();
 
-        await using var stream = file.OpenReadStream();
-        var url = await _storage.UploadAsync(stream, key, file.ContentType, ct);
+        var result = await _profile.RemoveAvatarAsync(userId, ct);
+        if (!result.IsSuccess) return BadRequest(Error(result.Error!.Code, result.Error.Message));
+        return Ok(result.Value);
+    }
 
-        var profile = await _profile.GetMyProfileAsync(userId, ct);
-        if (!profile.IsSuccess) return NotFound(Error("General.NotFound", "User not found."));
+    [HttpPut("me/avatar/fallback")]
+    [Authorize]
+    [SwaggerOperation(Summary = "Update avatar fallback color",
+        OperationId = "Profile_UpdateAvatarFallback", Tags = new[] { "Profile" })]
+    [ProducesResponseType(typeof(ProfileDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> UpdateAvatarFallback(
+        [FromBody] UpdateAvatarFallbackRequestDto request, CancellationToken ct)
+    {
+        if (!HasCsrfHeader()) return MissingCsrfHeader();
+        if (!TryGetUserId(out var userId)) return Unauthorized();
 
-        var result = await _profile.UpdateProfileAsync(userId, new UpdateProfileRequestDto(
-            profile.Value!.DisplayName, profile.Value.Bio, profile.Value.AvatarUrl, url,
-            profile.Value.Region, profile.Value.StatusMessage, profile.Value.Visibility), ct);
+        var result = await _profile.UpdateAvatarFallbackColorAsync(userId, request.Color, ct);
+        if (!result.IsSuccess) return BadRequest(Error(result.Error!.Code, result.Error.Message));
+        return Ok(result.Value);
+    }
 
+    [HttpPost("me/banner/upload-url")]
+    [Authorize]
+    [SwaggerOperation(Summary = "Create a presigned upload URL for a banner/cover image",
+        OperationId = "Profile_CreateBannerUploadUrl", Tags = new[] { "Profile" })]
+    [ProducesResponseType(typeof(ProfileMediaUploadUrlDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> CreateBannerUploadUrl(
+        [FromBody] ProfileMediaUploadUrlRequestDto request, CancellationToken ct)
+    {
+        if (!HasCsrfHeader()) return MissingCsrfHeader();
+        if (!TryGetUserId(out var userId)) return Unauthorized();
+
+        var result = await _profile.CreateBannerUploadUrlAsync(userId, request, ct);
+        if (!result.IsSuccess) return BadRequest(Error(result.Error!.Code, result.Error.Message));
+        return Ok(result.Value);
+    }
+
+    [HttpPost("me/banner/confirm")]
+    [Authorize]
+    [SwaggerOperation(Summary = "Confirm an uploaded banner/cover image and attach it to the profile",
+        OperationId = "Profile_ConfirmBannerUpload", Tags = new[] { "Profile" })]
+    [ProducesResponseType(typeof(ProfileDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> ConfirmBannerUpload(
+        [FromBody] ConfirmProfileMediaUploadRequestDto request, CancellationToken ct)
+    {
+        if (!HasCsrfHeader()) return MissingCsrfHeader();
+        if (!TryGetUserId(out var userId)) return Unauthorized();
+
+        var result = await _profile.ConfirmBannerUploadAsync(userId, request.ObjectKey, ct);
+        if (!result.IsSuccess) return BadRequest(Error(result.Error!.Code, result.Error.Message));
+        return Ok(result.Value);
+    }
+
+    [HttpDelete("me/banner")]
+    [Authorize]
+    [SwaggerOperation(Summary = "Remove the authenticated user's banner/cover image",
+        OperationId = "Profile_RemoveBanner", Tags = new[] { "Profile" })]
+    [ProducesResponseType(typeof(ProfileDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> RemoveBanner(CancellationToken ct)
+    {
+        if (!HasCsrfHeader()) return MissingCsrfHeader();
+        if (!TryGetUserId(out var userId)) return Unauthorized();
+
+        var result = await _profile.RemoveBannerAsync(userId, ct);
         if (!result.IsSuccess) return BadRequest(Error(result.Error!.Code, result.Error.Message));
         return Ok(result.Value);
     }

@@ -38,6 +38,10 @@ public static class DependencyInjection
         services.AddScoped<IProfileRepository, ProfileRepository>();
         services.AddScoped<IUsernameChangeRequestRepository, UsernameChangeRequestRepository>();
         services.Configure<AwsOptions>(configuration.GetSection(AwsOptions.SectionName));
+        services.PostConfigure<AwsOptions>(options =>
+        {
+            ApplyAwsEnvironmentFallbacks(options, configuration);
+        });
         services.AddScoped<IFileStorageService, S3FileStorageService>();
         services.AddHttpClient<ICaptchaVerificationService, GoogleRecaptchaV2Service>();
 
@@ -46,5 +50,16 @@ public static class DependencyInjection
         services.AddHostedService<TokenCleanupService>();
 
         return services;
+    }
+
+    private static void ApplyAwsEnvironmentFallbacks(AwsOptions options, IConfiguration configuration)
+    {
+        options.Region = configuration["AWS_REGION"] ?? options.Region;
+        options.S3BucketName = configuration["AWS_S3_BUCKET_NAME"] ?? options.S3BucketName;
+        options.S3ProfilePrefix = configuration["AWS_S3_PROFILE_PREFIX"] ?? options.S3ProfilePrefix;
+        if (int.TryParse(configuration["AWS_S3_UPLOAD_URL_EXPIRY_MINUTES"], out var upload))
+            options.S3UploadUrlExpiryMinutes = upload;
+        if (int.TryParse(configuration["AWS_S3_READ_URL_EXPIRY_MINUTES"], out var read))
+            options.S3ReadUrlExpiryMinutes = read;
     }
 }

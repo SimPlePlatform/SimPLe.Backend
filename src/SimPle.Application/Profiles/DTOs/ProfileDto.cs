@@ -7,6 +7,8 @@ public sealed record ProfileDto(
     string? Bio,
     string? AvatarUrl,
     string? BannerUrl,
+    bool HasUploadedAvatar,
+    bool HasUploadedBanner,
     string? StatusMessage,
     string Region,
     string Color,

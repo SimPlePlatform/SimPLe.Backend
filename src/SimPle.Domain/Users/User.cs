@@ -12,7 +12,9 @@ public class User : Entity
     public string DisplayName { get; private set; } = default!;
     public string? Bio { get; private set; }
     public string? AvatarUrl { get; private set; }
+    public string? AvatarObjectKey { get; private set; }
     public string? BannerUrl { get; private set; }
+    public string? BannerObjectKey { get; private set; }
     public string Color { get; private set; } = "#F0394B";
     public string Initials { get; private set; } = default!;
     public int Level { get; private set; } = 1;
@@ -93,6 +95,40 @@ public class User : Entity
         if (region is not null) Region = region;
         StatusMessage = statusMessage;
         if (visibility.HasValue) Visibility = visibility.Value;
+        Touch();
+    }
+
+    public void SetAvatarMedia(string objectKey)
+    {
+        AvatarObjectKey = objectKey;
+        AvatarUrl = null;
+        Touch();
+    }
+
+    public void ClearAvatarMedia()
+    {
+        AvatarObjectKey = null;
+        AvatarUrl = null;
+        Touch();
+    }
+
+    public void SetBannerMedia(string objectKey)
+    {
+        BannerObjectKey = objectKey;
+        BannerUrl = null;
+        Touch();
+    }
+
+    public void ClearBannerMedia()
+    {
+        BannerObjectKey = null;
+        BannerUrl = null;
+        Touch();
+    }
+
+    public void UpdateAvatarFallbackColor(string color)
+    {
+        Color = color.Trim();
         Touch();
     }
 
