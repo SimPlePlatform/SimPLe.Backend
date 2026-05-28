@@ -73,13 +73,14 @@ public sealed class UserEntityTests
     {
         var user = MakeUser();
 
-        user.UpdateProfile("New Name", "My bio", "https://avatar", "https://banner");
+        user.UpdateProfile("New Name", "My bio");
 
         user.DisplayName.Should().Be("New Name");
         user.Bio.Should().Be("My bio");
-        user.AvatarUrl.Should().Be("https://avatar");
-        user.BannerUrl.Should().Be("https://banner");
         user.Initials.Should().Be("NN");
+        // AvatarUrl/BannerUrl are managed exclusively through media upload/remove endpoints.
+        user.AvatarUrl.Should().BeNull();
+        user.BannerUrl.Should().BeNull();
     }
 
     [Fact]

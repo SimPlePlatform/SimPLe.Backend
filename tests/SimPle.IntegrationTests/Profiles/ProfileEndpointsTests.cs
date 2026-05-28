@@ -68,8 +68,6 @@ public sealed class ProfileEndpointsTests : IDisposable
         {
             DisplayName = "My Updated Name",
             Bio = "Hello from integration test",
-            AvatarUrl = (string?)null,
-            BannerUrl = (string?)null,
             Region = "NA-East",
             StatusMessage = "Testing!",
             Visibility = "Private",
@@ -552,6 +550,185 @@ public sealed class ProfileEndpointsTests : IDisposable
 
         var response = await client.PutAsJsonAsync("/api/profile/me/interests",
             new { Interests = new[] { "underwater-basket-weaving" } });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    // ── Security regression tests ──────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("image/svg+xml")]
+    [InlineData("image/gif")]
+    [InlineData("text/html")]
+    [InlineData("application/octet-stream")]
+    public async Task UploadUrl_RejectedContentTypes_Return400(string contentType)
+    {
+        using var client = CreateClient();
+        var (email, username) = UniqueUser();
+        await RegisterAndLoginAsync(client, email, username);
+
+        var response = await client.PostAsJsonAsync("/api/profile/me/avatar/upload-url", new
+        {
+            FileName = "file",
+            ContentType = contentType,
+            FileSizeBytes = 1024
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task UpdateMe_ArbitraryAvatarUrlInBody_IsIgnored()
+    {
+        // Even if a client sends AvatarUrl in the JSON body, it must not affect the stored avatar.
+        // The field is removed from UpdateProfileRequestDto; ASP.NET ignores unknown JSON keys.
+        using var client = CreateClient();
+        var (email, username) = UniqueUser();
+        await RegisterAndLoginAsync(client, email, username);
+
+        var response = await client.PutAsJsonAsync("/api/profile/me", new
+        {
+            DisplayName = "Test",
+            AvatarUrl = "https://tracking.evil.example/pixel.gif",
+            BannerUrl = "https://tracking.evil.example/banner.gif",
+            Visibility = "Public"
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().NotContain("tracking.evil.example");
+        body.Should().Contain("\"hasUploadedAvatar\":false");
+    }
+
+    [Fact]
+    public async Task UpdateMe_DeveloperProfileType_DoesNotElevateRole()
+    {
+        using var client = CreateClient();
+        var (email, username) = UniqueUser();
+        await RegisterAndLoginAsync(client, email, username);
+
+        await client.PutAsJsonAsync("/api/profile/me", new
+        {
+            DisplayName = "Dev User",
+            ProfileType = "Developer",
+            Visibility = "Public"
+        });
+
+        var profile = await client.GetAsync("/api/profile/me");
+        var body = await profile.Content.ReadAsStringAsync();
+        body.Should().Contain("\"profileType\":\"Developer\"");
+        body.Should().Contain("\"role\":\"Player\"");
+        body.Should().NotContain("\"role\":\"Admin\"");
+    }
+
+    [Fact]
+    public async Task GetMe_RegionIsNotEuWest()
+    {
+        using var client = CreateClient();
+        var (email, username) = UniqueUser();
+        await RegisterAndLoginAsync(client, email, username);
+
+        var response = await client.GetAsync("/api/profile/me");
+        var body = await response.Content.ReadAsStringAsync();
+
+        body.Should().NotContain("eu-west");
+    }
+
+    [Fact]
+    public async Task GetPublicProfile_PrivateProfile_DoesNotExposeEmailOrAuthFields()
+    {
+        using var ownerClient = CreateClient();
+        var (email, username) = UniqueUser();
+        await RegisterAndLoginAsync(ownerClient, email, username);
+        await ownerClient.PutAsJsonAsync("/api/profile/me", new
+        {
+            DisplayName = "Private User",
+            Visibility = "Public"
+        });
+
+        using var anonClient = CreateClient();
+        var response = await anonClient.GetAsync($"/api/profile/{username}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().NotContain("passwordHash");
+        body.Should().NotContain("failedLoginCount");
+        body.Should().NotContain("isSuspended");
+        body.Should().NotContain("googleId");
+        body.Should().NotContain("email");
+    }
+
+    [Fact]
+    public async Task UpdateLinks_WebsitePlatform_Returns400()
+    {
+        using var client = CreateClient();
+        var (email, username) = UniqueUser();
+        await RegisterAndLoginAsync(client, email, username);
+
+        var response = await client.PutAsJsonAsync("/api/profile/me/links", new
+        {
+            Links = new[] { new { Platform = "website", Url = "https://example.com", DisplayLabel = (string?)null, SortOrder = 0 } }
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task UpdateLinks_JavascriptUrl_Returns400()
+    {
+        using var client = CreateClient();
+        var (email, username) = UniqueUser();
+        await RegisterAndLoginAsync(client, email, username);
+
+        var response = await client.PutAsJsonAsync("/api/profile/me/links", new
+        {
+            Links = new[] { new { Platform = "github", Url = "javascript:alert(1)", DisplayLabel = (string?)null, SortOrder = 0 } }
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task UpdateAvatarFallbackColor_InvalidColor_Returns400()
+    {
+        using var client = CreateClient();
+        var (email, username) = UniqueUser();
+        await RegisterAndLoginAsync(client, email, username);
+
+        var response = await client.PutAsJsonAsync("/api/profile/me/avatar/fallback",
+            new { Color = "red; injection" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task UpdateBannerFallbackColor_InvalidColor_Returns400()
+    {
+        using var client = CreateClient();
+        var (email, username) = UniqueUser();
+        await RegisterAndLoginAsync(client, email, username);
+
+        var response = await client.PutAsJsonAsync("/api/profile/me/banner/fallback",
+            new { Color = "notahexcolor" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task ConfirmAvatarUpload_AnotherUsersObjectKey_Returns400()
+    {
+        using var ownerClient = CreateClient();
+        var (e1, u1) = UniqueUser();
+        await RegisterAndLoginAsync(ownerClient, e1, u1);
+        var ownerKey = await CreateUploadObjectKeyAsync(ownerClient, "/api/profile/me/avatar/upload-url", "image/png", "avatar.png");
+
+        // Second user tries to confirm the first user's object key.
+        using var attackerClient = CreateClient();
+        var (e2, u2) = UniqueUser();
+        await RegisterAndLoginAsync(attackerClient, e2, u2);
+
+        var response = await attackerClient.PostAsJsonAsync("/api/profile/me/avatar/confirm",
+            new { ObjectKey = ownerKey });
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }

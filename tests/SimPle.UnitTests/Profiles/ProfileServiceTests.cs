@@ -89,7 +89,7 @@ public sealed class ProfileServiceTests
     public async Task GetPublicProfile_PrivateUser_HiddenFromOthers()
     {
         var user = MakeUser();
-        user.UpdateProfile("Test", null, null, null, visibility: ProfileVisibility.Private);
+        user.UpdateProfile("Test", null, visibility: ProfileVisibility.Private);
         _users.GetByNormalizedUsernameAsync("TESTUSER").Returns(user);
 
         var result = await _service.GetPublicProfileAsync("testuser", Guid.NewGuid());
@@ -102,7 +102,7 @@ public sealed class ProfileServiceTests
     public async Task GetPublicProfile_PrivateUser_VisibleToOwner()
     {
         var user = MakeUser();
-        user.UpdateProfile("Test", null, null, null, visibility: ProfileVisibility.Private);
+        user.UpdateProfile("Test", null, visibility: ProfileVisibility.Private);
         _users.GetByNormalizedUsernameAsync("TESTUSER").Returns(user);
 
         var result = await _service.GetPublicProfileAsync("testuser", user.Id);
@@ -114,7 +114,7 @@ public sealed class ProfileServiceTests
     public async Task GetPublicProfile_FriendsOnly_TreatedAsOwnerOnly()
     {
         var user = MakeUser();
-        user.UpdateProfile("Test", null, null, null, visibility: ProfileVisibility.FriendsOnly);
+        user.UpdateProfile("Test", null, visibility: ProfileVisibility.FriendsOnly);
         _users.GetByNormalizedUsernameAsync("TESTUSER").Returns(user);
 
         var result = await _service.GetPublicProfileAsync("testuser", Guid.NewGuid());
@@ -145,8 +145,6 @@ public sealed class ProfileServiceTests
         var result = await _service.UpdateProfileAsync(user.Id, new UpdateProfileRequestDto(
             DisplayName: "Updated Name",
             Bio: "My bio",
-            AvatarUrl: null,
-            BannerUrl: null,
             Region: "NA-East",
             StatusMessage: "Playing!",
             Visibility: "FriendsOnly",
@@ -170,7 +168,7 @@ public sealed class ProfileServiceTests
 
         // If the visibility string doesn't parse, the enum stays at its current value.
         var result = await _service.UpdateProfileAsync(user.Id, new UpdateProfileRequestDto(
-            "Name", null, null, null, null, null, "InvalidEnum", null));
+            "Name", null, null, null, "InvalidEnum", null));
 
         result.IsSuccess.Should().BeTrue();
         result.Value!.Visibility.Should().Be("Public"); // unchanged default
@@ -326,13 +324,12 @@ public sealed class ProfileServiceTests
     // ── Validators ────────────────────────────────────────────────────────────
 
     [Theory]
-    [InlineData("", null, null, null)]        // empty display name
-    [InlineData("Name", null, "not-https", null)]  // avatar not https
-    public async Task UpdateProfileValidator_InvalidInput_HasErrors(
-        string displayName, string? bio, string? avatarUrl, string? bannerUrl)
+    [InlineData("")]                           // empty display name
+    [InlineData("   ")]                        // whitespace display name
+    public async Task UpdateProfileValidator_InvalidInput_HasErrors(string displayName)
     {
         var validator = new UpdateProfileRequestValidator();
-        var dto = new UpdateProfileRequestDto(displayName, bio, avatarUrl, bannerUrl, null, null, null, null);
+        var dto = new UpdateProfileRequestDto(displayName, null, null, null, null, null);
         var result = await validator.ValidateAsync(dto, CancellationToken.None);
         result.IsValid.Should().BeFalse();
     }
@@ -341,11 +338,20 @@ public sealed class ProfileServiceTests
     public async Task UpdateProfileValidator_ValidInput_Passes()
     {
         var validator = new UpdateProfileRequestValidator();
-        var dto = new UpdateProfileRequestDto(
-            "Test User", "Bio text", "https://example.com/avatar.png",
-            null, "", null, "Public", "Player");
+        var dto = new UpdateProfileRequestDto("Test User", "Bio text", "NA-East", null, "Public", "Player");
         var result = await validator.ValidateAsync(dto, CancellationToken.None);
         result.IsValid.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task UpdateProfileValidator_AvatarUrl_NotAccepted()
+    {
+        // AvatarUrl and BannerUrl must not be accepted in profile update requests.
+        // Media is managed exclusively through the upload/confirm/remove endpoints.
+        var dto = typeof(UpdateProfileRequestDto);
+        var properties = dto.GetProperties().Select(p => p.Name).ToArray();
+        properties.Should().NotContain("AvatarUrl");
+        properties.Should().NotContain("BannerUrl");
     }
 
     [Fact]
@@ -651,7 +657,7 @@ public sealed class ProfileServiceTests
     public async Task UpdateProfileValidator_InvalidProfileType_HasErrors()
     {
         var validator = new UpdateProfileRequestValidator();
-        var dto = new UpdateProfileRequestDto("Test User", null, null, null, null, null, "Public", "Admin");
+        var dto = new UpdateProfileRequestDto("Test User", null, null, null, "Public", "Admin");
 
         var result = await validator.ValidateAsync(dto, CancellationToken.None);
 
@@ -664,6 +670,132 @@ public sealed class ProfileServiceTests
         var validator = new UpdateInterestsRequestValidator();
         var dto = new UpdateInterestsRequestDto(["not-a-real-interest"]);
         var result = await validator.ValidateAsync(dto, CancellationToken.None);
+        result.IsValid.Should().BeFalse();
+    }
+
+    // ── Security regression tests ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task UpdateProfile_DeveloperType_DoesNotElevateRole()
+    {
+        var user = MakeUser();
+        _users.GetByIdAsync(user.Id).Returns(user);
+
+        var result = await _service.UpdateProfileAsync(user.Id, new UpdateProfileRequestDto(
+            "Dev", null, null, null, "Public", "Developer"));
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.ProfileType.Should().Be("Developer");
+        result.Value.Role.Should().Be("Player");
+    }
+
+    [Fact]
+    public async Task CreateAvatarUploadUrl_SvgContentType_Fails()
+    {
+        var user = MakeUser();
+        _users.GetByIdAsync(user.Id).Returns(user);
+
+        var result = await _service.CreateAvatarUploadUrlAsync(user.Id,
+            new ProfileMediaUploadUrlRequestDto("icon.svg", "image/svg+xml", 1024));
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error!.Code.Should().Be("Validation.Failed");
+    }
+
+    [Fact]
+    public async Task CreateAvatarUploadUrl_GifContentType_Fails()
+    {
+        var user = MakeUser();
+        _users.GetByIdAsync(user.Id).Returns(user);
+
+        var result = await _service.CreateAvatarUploadUrlAsync(user.Id,
+            new ProfileMediaUploadUrlRequestDto("anim.gif", "image/gif", 1024));
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error!.Code.Should().Be("Validation.Failed");
+    }
+
+    [Fact]
+    public async Task UpdateAvatarFallbackColor_HexInjectionAttempt_Fails()
+    {
+        var user = MakeUser();
+        _users.GetByIdAsync(user.Id).Returns(user);
+
+        var result = await _service.UpdateAvatarFallbackColorAsync(user.Id, "red; background: url(evil)");
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error!.Code.Should().Be("Validation.Failed");
+    }
+
+    [Fact]
+    public async Task GetPublicProfile_EuWestRegion_IsNormalizedToEmpty()
+    {
+        var user = MakeUser();
+        // Simulate old data with eu-west region stored in DB.
+        user.UpdateProfile("Test", null, "eu-west");
+        _users.GetByNormalizedUsernameAsync("TESTUSER").Returns(user);
+
+        var result = await _service.GetPublicProfileAsync("testuser", null);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.Region.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetMyProfile_RegionEuWest_IsNormalizedToEmpty()
+    {
+        var user = MakeUser();
+        user.UpdateProfile("Test", null, "eu-west");
+        _users.GetByIdAsync(user.Id).Returns(user);
+
+        var result = await _service.GetMyProfileAsync(user.Id);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.Region.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task LinksValidator_JavascriptScheme_Rejected()
+    {
+        var validator = new UpdateLinksRequestValidator();
+        var dto = new UpdateLinksRequestDto([new LinkItemDto("github", "javascript:alert(1)", null, 0)]);
+
+        var result = await validator.ValidateAsync(dto, CancellationToken.None);
+
+        result.IsValid.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task LinksValidator_EvilDomain_Rejected()
+    {
+        var validator = new UpdateLinksRequestValidator();
+        var dto = new UpdateLinksRequestDto([new LinkItemDto("github", "https://evil.com/user", null, 0)]);
+
+        var result = await validator.ValidateAsync(dto, CancellationToken.None);
+
+        result.IsValid.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("github",    "testhandle",                 "https://github.com/testhandle")]
+    [InlineData("xtwitter",  "testhandle",                 "https://x.com/testhandle")]
+    [InlineData("instagram", "@testhandle",                "https://www.instagram.com/testhandle")]
+    [InlineData("xtwitter",  "https://twitter.com/user",   "https://x.com/user")]
+    public void ProfileExternalLink_ValidHandleAndUrl_NormalizesCorrectly(
+        string platform, string input, string expectedUrl)
+    {
+        var result = ProfileExternalLink.NormalizeUrlForPlatform(platform, input);
+        result.Should().Be(expectedUrl);
+    }
+
+    [Fact]
+    public async Task UpdateProfileValidator_InvalidVisibility_HasErrors()
+    {
+        var validator = new UpdateProfileRequestValidator();
+        var dto = new UpdateProfileRequestDto("Name", null, null, null, "SuperAdmin", null);
+
+        var result = await validator.ValidateAsync(dto, CancellationToken.None);
+
         result.IsValid.Should().BeFalse();
     }
 }
