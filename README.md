@@ -37,11 +37,23 @@ ASP.NET Core 8 backend for the SimPle multiplayer game platform.
    ```
    docker compose -f compose.auth.yml up -d
    ```
-4. Apply migrations:
+4. Start local MinIO for profile avatar/banner uploads:
+   ```powershell
+   docker compose -f compose.storage.yml up -d
+   ```
+   MinIO API: `http://localhost:9000`; console: `http://localhost:9001`;
+   bucket: `simple-profile-assets-dev`.
+5. If browser direct uploads are blocked by CORS, configure local MinIO CORS:
+   ```powershell
+   mc alias set local http://localhost:9000 simpleadmin simpleadmin123
+   mc cors set local/simple-profile-assets-dev cors.local.json
+   mc cors info local/simple-profile-assets-dev
+   ```
+6. Apply migrations:
    ```
    dotnet ef database update --project src/SimPle.Infrastructure --startup-project src/SimPle.Api
    ```
-5. Run the API:
+7. Run the API:
    ```
    dotnet run --project src/SimPle.Api
    ```

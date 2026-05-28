@@ -12,19 +12,25 @@ public class User : Entity
     public string DisplayName { get; private set; } = default!;
     public string? Bio { get; private set; }
     public string? AvatarUrl { get; private set; }
+    public string? AvatarObjectKey { get; private set; }
     public string? BannerUrl { get; private set; }
+    public string? BannerObjectKey { get; private set; }
     public string Color { get; private set; } = "#F0394B";
     public string Initials { get; private set; } = default!;
     public int Level { get; private set; } = 1;
     public long Xp { get; private set; }
     public int Elo { get; private set; } = 1200;
-    public string Region { get; private set; } = "EU-West";
+    public string Region { get; private set; } = string.Empty;
     public UserStatus Status { get; private set; } = UserStatus.Offline;
     public UserRole Role { get; private set; } = UserRole.Player;
     public bool IsEmailVerified { get; private set; }
     public bool IsSuspended { get; private set; }
     public DateTime? SuspendedUntil { get; private set; }
     public SubscriptionTier SubscriptionTier { get; private set; } = SubscriptionTier.Free;
+
+    // Profile social identity
+    public string? StatusMessage { get; private set; }
+    public ProfileVisibility Visibility { get; private set; } = ProfileVisibility.Public;
 
     // Auth security fields
     public int FailedLoginCount { get; private set; }
@@ -76,13 +82,60 @@ public class User : Entity
         Touch();
     }
 
-    public void UpdateProfile(string displayName, string? bio, string? avatarUrl, string? bannerUrl)
+    public void UpdateProfile(
+        string displayName, string? bio, string? avatarUrl, string? bannerUrl,
+        string? region = null, string? statusMessage = null,
+        ProfileVisibility? visibility = null)
     {
         DisplayName = displayName;
         Bio = bio;
         AvatarUrl = avatarUrl;
         BannerUrl = bannerUrl;
         Initials = BuildInitials(displayName);
+        if (region is not null) Region = region;
+        StatusMessage = statusMessage;
+        if (visibility.HasValue) Visibility = visibility.Value;
+        Touch();
+    }
+
+    public void SetAvatarMedia(string objectKey)
+    {
+        AvatarObjectKey = objectKey;
+        AvatarUrl = null;
+        Touch();
+    }
+
+    public void ClearAvatarMedia()
+    {
+        AvatarObjectKey = null;
+        AvatarUrl = null;
+        Touch();
+    }
+
+    public void SetBannerMedia(string objectKey)
+    {
+        BannerObjectKey = objectKey;
+        BannerUrl = null;
+        Touch();
+    }
+
+    public void ClearBannerMedia()
+    {
+        BannerObjectKey = null;
+        BannerUrl = null;
+        Touch();
+    }
+
+    public void UpdateAvatarFallbackColor(string color)
+    {
+        Color = color.Trim();
+        Touch();
+    }
+
+    public void UpdateUsername(string newUsername)
+    {
+        Username = newUsername.Trim();
+        NormalizedUsername = newUsername.Trim().ToUpperInvariant();
         Touch();
     }
 
@@ -142,3 +195,4 @@ public class User : Entity
 public enum UserStatus { Offline, Online, Away, Playing, InLobby }
 public enum UserRole { Player, Moderator, Admin }
 public enum SubscriptionTier { Free, Plus, Pro }
+public enum ProfileVisibility { Public, FriendsOnly, Private }
