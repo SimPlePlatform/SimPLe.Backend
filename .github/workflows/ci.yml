@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "feature/**"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  backend:
+    name: Build, test, vulnerability scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Unit tests
+        run: dotnet test tests/SimPle.UnitTests/SimPle.UnitTests.csproj --no-build --configuration Release
+
+      - name: Integration tests
+        run: dotnet test tests/SimPle.IntegrationTests/SimPle.IntegrationTests.csproj --no-build --configuration Release
+
+      - name: NuGet vulnerability scan
+        run: dotnet list package --vulnerable
