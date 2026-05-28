@@ -17,8 +17,8 @@ public class ProfileExternalLink : Entity
         return new ProfileExternalLink
         {
             UserId = userId,
-            Platform = platform.Trim().ToLowerInvariant(),
-            Url = url.Trim(),
+            Platform = NormalizePlatform(platform),
+            Url = NormalizeUrl(url),
             DisplayLabel = displayLabel?.Trim(),
             SortOrder = sortOrder,
         };
@@ -30,5 +30,25 @@ public class ProfileExternalLink : Entity
         DisplayLabel = displayLabel?.Trim();
         SortOrder = sortOrder;
         Touch();
+    }
+
+    private static string NormalizePlatform(string platform)
+    {
+        var normalized = platform.Trim().ToLowerInvariant();
+        return normalized == "twitter" ? "xtwitter" : normalized;
+    }
+
+    private static string NormalizeUrl(string url)
+    {
+        var trimmed = url.Trim();
+        if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var uri)) return trimmed;
+
+        var builder = new UriBuilder(uri)
+        {
+            Scheme = Uri.UriSchemeHttps,
+            Host = uri.Host.ToLowerInvariant()
+        };
+        if (builder.Uri.IsDefaultPort) builder.Port = -1;
+        return builder.Uri.ToString().TrimEnd('/');
     }
 }
