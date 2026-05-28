@@ -12,6 +12,7 @@ public sealed class EmailVerificationTokenConfiguration : IEntityTypeConfigurati
         builder.HasKey(t => t.Id);
 
         builder.Property(t => t.TokenHash).HasMaxLength(100).IsRequired();
+        builder.Property(t => t.PendingEmail).HasMaxLength(256);
 
         builder.HasIndex(t => t.TokenHash).IsUnique();
         builder.HasIndex(t => t.UserId);

@@ -116,6 +116,17 @@ public class User : Entity
     public bool IsAccountSuspended() =>
         IsSuspended && (SuspendedUntil == null || SuspendedUntil.Value > DateTime.UtcNow);
 
+    public void UpdateEmail(string newEmail)
+    {
+        Email = newEmail.Trim();
+        NormalizedEmail = newEmail.Trim().ToUpperInvariant();
+        IsEmailVerified = true;
+        SecurityStamp = Guid.NewGuid();
+        Touch();
+    }
+
+    public void DisconnectGoogle() { GoogleId = null; Touch(); }
+
     public void SetStatus(UserStatus status) { Status = status; Touch(); }
     public void VerifyEmail() { IsEmailVerified = true; Touch(); }
     public void AddXp(long amount) { Xp += amount; Touch(); }

@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using SimPle.Api.Models;
 using SimPle.Application.Auth.DTOs;
 using SimPle.Application.Auth.Services;
+using SimPle.Application.Auth.Validators;
 using SimPle.Application.Common.Interfaces;
 using SimPle.Application.Common.Options;
 using SimPle.Shared.Common;
@@ -441,6 +442,107 @@ public sealed class AuthController : ControllerBase
 
         SetAuthCookies(result.Value!);
         return Ok(result.Value!.User);
+    }
+
+    // ── Account security ─────────────────────────────────────────────────────
+
+    [HttpPost("change-password")]
+    [Authorize]
+    [SwaggerOperation(Summary = "Change the authenticated user's password",
+        OperationId = "Auth_ChangePassword", Tags = new[] { "Account Security" })]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequestDto request, CancellationToken ct)
+    {
+        if (!HasCsrfHeader()) return MissingCsrfHeader();
+        if (!TryGetUserId(out var userId)) return Unauthorized();
+
+        var validator = new ChangePasswordRequestValidator();
+        var validation = await validator.ValidateAsync(request, ct);
+        if (!validation.IsValid)
+            return BadRequest(ErrorResponse("Validation.Failed",
+                validation.Errors.First().ErrorMessage));
+
+        var result = await _authService.ChangePasswordAsync(userId, request.CurrentPassword, request.NewPassword, ct);
+        if (!result.IsSuccess) return Failure(result.Error);
+
+        ClearAuthCookies();
+        return NoContent();
+    }
+
+    [HttpPost("change-email")]
+    [Authorize]
+    [SwaggerOperation(Summary = "Request an email address change (sends a verification link)",
+        OperationId = "Auth_ChangeEmail", Tags = new[] { "Account Security" })]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> ChangeEmail([FromBody] ChangeEmailRequestDto request, CancellationToken ct)
+    {
+        if (!HasCsrfHeader()) return MissingCsrfHeader();
+        if (!TryGetUserId(out var userId)) return Unauthorized();
+
+        var validator = new ChangeEmailRequestValidator();
+        var validation = await validator.ValidateAsync(request, ct);
+        if (!validation.IsValid)
+            return BadRequest(ErrorResponse("Validation.Failed",
+                validation.Errors.First().ErrorMessage));
+
+        var result = await _authService.RequestEmailChangeAsync(userId, request.NewEmail, ct);
+        if (!result.IsSuccess) return Failure(result.Error);
+        return NoContent();
+    }
+
+    [HttpGet("sessions")]
+    [Authorize]
+    [SwaggerOperation(Summary = "List the authenticated user's active sessions",
+        OperationId = "Auth_GetSessions", Tags = new[] { "Account Security" })]
+    [ProducesResponseType(typeof(IReadOnlyList<SessionDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> GetSessions(CancellationToken ct)
+    {
+        if (!TryGetUserId(out var userId)) return Unauthorized();
+
+        var rawToken = Request.Cookies[RefreshTokenCookie];
+        var result = await _authService.GetActiveSessionsAsync(userId, rawToken, ct);
+        return Ok(result.Value);
+    }
+
+    [HttpDelete("sessions/{sessionId:guid}")]
+    [Authorize]
+    [SwaggerOperation(Summary = "Revoke a specific session by its ID",
+        OperationId = "Auth_RevokeSession", Tags = new[] { "Account Security" })]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> RevokeSession([FromRoute] Guid sessionId, CancellationToken ct)
+    {
+        if (!HasCsrfHeader()) return MissingCsrfHeader();
+        if (!TryGetUserId(out var userId)) return Unauthorized();
+
+        var result = await _authService.RevokeSessionAsync(userId, sessionId, ct);
+        if (!result.IsSuccess) return Failure(result.Error);
+        return NoContent();
+    }
+
+    [HttpDelete("account")]
+    [Authorize]
+    [SwaggerOperation(Summary = "Permanently delete the authenticated user's account",
+        OperationId = "Auth_DeleteAccount", Tags = new[] { "Account Security" })]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> DeleteAccount([FromBody] DeleteAccountRequestDto request, CancellationToken ct)
+    {
+        if (!HasCsrfHeader()) return MissingCsrfHeader();
+        if (!TryGetUserId(out var userId)) return Unauthorized();
+
+        var result = await _authService.DeleteAccountAsync(userId, request.Password, ct);
+        if (!result.IsSuccess) return Failure(result.Error);
+
+        ClearAuthCookies();
+        return NoContent();
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
