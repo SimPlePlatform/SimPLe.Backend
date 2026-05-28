@@ -15,9 +15,11 @@ public interface IProfileService
     Task<Result<ProfileDto>> RemoveAvatarAsync(Guid userId, CancellationToken ct = default);
     Task<Result<ProfileDto>> RemoveBannerAsync(Guid userId, CancellationToken ct = default);
     Task<Result<ProfileDto>> UpdateAvatarFallbackColorAsync(Guid userId, string color, CancellationToken ct = default);
-    Task<Result> UpdateUsernameAsync(Guid userId, string newUsername, CancellationToken ct = default);
+    Task<Result<ProfileDto>> UpdateBannerFallbackColorAsync(Guid userId, string color, CancellationToken ct = default);
+    Task<Result<UsernameChangeResultDto>> UpdateUsernameAsync(Guid userId, string newUsername, CancellationToken ct = default);
     Task<Result<UsernameChangeRequestDto>> RequestUsernameChangeAsync(Guid userId, string requestedUsername, CancellationToken ct = default);
     Task<Result<UsernameChangeRequestDto?>> GetUsernameChangeRequestAsync(Guid userId, CancellationToken ct = default);
+    Task<Result<UsernameChangeRequestDto>> CancelUsernameChangeRequestAsync(Guid userId, CancellationToken ct = default);
     Task<Result<IReadOnlyList<ExternalLinkDto>>> GetLinksAsync(Guid userId, CancellationToken ct = default);
     Task<Result<IReadOnlyList<ExternalLinkDto>>> UpdateLinksAsync(Guid userId, UpdateLinksRequestDto request, CancellationToken ct = default);
     Task<Result<IReadOnlyList<string>>> GetInterestsAsync(Guid userId, CancellationToken ct = default);

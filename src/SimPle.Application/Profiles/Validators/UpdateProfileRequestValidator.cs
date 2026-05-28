@@ -6,7 +6,7 @@ namespace SimPle.Application.Profiles.Validators;
 public sealed class UpdateProfileRequestValidator : AbstractValidator<UpdateProfileRequestDto>
 {
     private static readonly string[] AllowedVisibilities = ["Public", "FriendsOnly", "Private"];
-    private static readonly string[] AllowedProfileTypes = ["Gamer", "Developer"];
+    private static readonly string[] AllowedProfileTypes = ["Player", "Developer"];
 
     public UpdateProfileRequestValidator()
     {

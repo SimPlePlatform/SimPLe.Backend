@@ -143,18 +143,53 @@ public sealed class ProfileService : IProfileService
         return await BuildDtoAsync(user, ct);
     }
 
-    public async Task<Result> UpdateUsernameAsync(Guid userId, string newUsername, CancellationToken ct = default)
+    public async Task<Result<ProfileDto>> UpdateBannerFallbackColorAsync(
+        Guid userId, string color, CancellationToken ct = default)
     {
-        var normalized = newUsername.Trim().ToUpperInvariant();
-        if (await _users.ExistsByUsernameAsync(normalized, ct))
-            return Result.Fail("Profile.UsernameTaken", "That username is already in use.");
+        if (!IsSafeHexColor(color))
+            return Result<ProfileDto>.Fail("Validation.Failed", "Banner fallback color must be a hex color.");
 
         var user = await _users.GetByIdAsync(userId, ct);
-        if (user is null) return Result.Fail("General.NotFound", "User not found.");
+        if (user is null) return Result<ProfileDto>.Fail("General.NotFound", "User not found.");
 
-        user.UpdateUsername(newUsername);
+        user.UpdateBannerFallbackColor(color);
         await _users.UpdateAsync(user, ct);
-        return Result.Ok();
+        return await BuildDtoAsync(user, ct);
+    }
+
+    public async Task<Result<UsernameChangeResultDto>> UpdateUsernameAsync(Guid userId, string newUsername, CancellationToken ct = default)
+    {
+        var normalized = newUsername.Trim().ToUpperInvariant();
+        var user = await _users.GetByIdAsync(userId, ct);
+        if (user is null) return Result<UsernameChangeResultDto>.Fail("General.NotFound", "User not found.");
+
+        if (user.NormalizedUsername == normalized)
+            return Result<UsernameChangeResultDto>.Fail("Profile.SameUsername", "The requested username is the same as your current one.");
+
+        if (await _users.ExistsByUsernameAsync(normalized, ct))
+            return Result<UsernameChangeResultDto>.Fail("Profile.UsernameTaken", "That username is already in use.");
+
+        var now = DateTime.UtcNow;
+        if (!user.HasUsedImmediateUsernameChangeIn(now.Year, now.Month))
+        {
+            user.UpdateUsername(newUsername);
+            user.RecordImmediateUsernameChange(now.Year, now.Month);
+            await _users.UpdateAsync(user, ct);
+
+            return Result<UsernameChangeResultDto>.Ok(new(
+                AppliedImmediately: true,
+                Message: "Username changed. You have used this month's immediate username change.",
+                Request: null));
+        }
+
+        var requestResult = await UpsertUsernameRequestAsync(user, newUsername, now.Year, now.Month, ct);
+        if (!requestResult.IsSuccess)
+            return Result<UsernameChangeResultDto>.Fail(requestResult.Error!.Code, requestResult.Error.Message);
+
+        return Result<UsernameChangeResultDto>.Ok(new(
+            AppliedImmediately: false,
+            Message: "Username change request saved for admin review.",
+            Request: requestResult.Value));
     }
 
     public async Task<Result<IReadOnlyList<ExternalLinkDto>>> GetLinksAsync(
@@ -196,28 +231,21 @@ public sealed class ProfileService : IProfileService
     public async Task<Result<UsernameChangeRequestDto>> RequestUsernameChangeAsync(
         Guid userId, string requestedUsername, CancellationToken ct = default)
     {
-        var normalized = requestedUsername.Trim().ToUpperInvariant();
+        var user = await _users.GetByIdAsync(userId, ct);
+        if (user is null)
+            return Result<UsernameChangeRequestDto>.Fail("General.NotFound", "User not found.");
 
-        var existing = await _usernameRequests.GetPendingByUserIdAsync(userId, ct);
-        if (existing is not null)
-            return Result<UsernameChangeRequestDto>.Fail("Profile.PendingRequestExists",
-                "You already have a pending username change request.");
+        var normalized = requestedUsername.Trim().ToUpperInvariant();
+        if (user.NormalizedUsername == normalized)
+            return Result<UsernameChangeRequestDto>.Fail("Profile.SameUsername",
+                "The requested username is the same as your current one.");
 
         if (await _users.ExistsByUsernameAsync(normalized, ct))
             return Result<UsernameChangeRequestDto>.Fail("Profile.UsernameTaken",
                 "That username is already in use.");
 
-        var user = await _users.GetByIdAsync(userId, ct);
-        if (user is null)
-            return Result<UsernameChangeRequestDto>.Fail("General.NotFound", "User not found.");
-
-        if (user.NormalizedUsername == normalized)
-            return Result<UsernameChangeRequestDto>.Fail("Profile.SameUsername",
-                "The requested username is the same as your current one.");
-
-        var request = UsernameChangeRequest.Create(userId, requestedUsername);
-        await _usernameRequests.AddAsync(request, ct);
-        return Result<UsernameChangeRequestDto>.Ok(ToRequestDto(request));
+        var now = DateTime.UtcNow;
+        return await UpsertUsernameRequestAsync(user, requestedUsername, now.Year, now.Month, ct);
     }
 
     public async Task<Result<UsernameChangeRequestDto?>> GetUsernameChangeRequestAsync(
@@ -225,6 +253,41 @@ public sealed class ProfileService : IProfileService
     {
         var request = await _usernameRequests.GetLatestByUserIdAsync(userId, ct);
         return Result<UsernameChangeRequestDto?>.Ok(request is null ? null : ToRequestDto(request));
+    }
+
+    public async Task<Result<UsernameChangeRequestDto>> CancelUsernameChangeRequestAsync(
+        Guid userId, CancellationToken ct = default)
+    {
+        var request = await _usernameRequests.GetPendingByUserIdAsync(userId, ct);
+        if (request is null || request.UserId != userId)
+            return Result<UsernameChangeRequestDto>.Fail("Profile.UsernameRequestNotFound", "No pending username change request was found.");
+
+        request.Cancel();
+        await _usernameRequests.UpdateAsync(request, ct);
+        return Result<UsernameChangeRequestDto>.Ok(ToRequestDto(request));
+    }
+
+    private async Task<Result<UsernameChangeRequestDto>> UpsertUsernameRequestAsync(
+        User user, string requestedUsername, int year, int month, CancellationToken ct)
+    {
+        var existingPending = await _usernameRequests.GetPendingByUserIdAsync(user.Id, ct);
+        if (existingPending is not null)
+        {
+            existingPending.UpdateRequestedUsername(requestedUsername);
+            await _usernameRequests.UpdateAsync(existingPending, ct);
+            return Result<UsernameChangeRequestDto>.Ok(ToRequestDto(existingPending));
+        }
+
+        if (user.HasUsedAdminUsernameRequestIn(year, month) ||
+            await _usernameRequests.GetByUserIdAndMonthAsync(user.Id, year, month, ct) is not null)
+            return Result<UsernameChangeRequestDto>.Fail("Profile.MonthlyAdminRequestUsed",
+                "You have already used this month's username change request.");
+
+        var request = UsernameChangeRequest.Create(user.Id, requestedUsername, year, month);
+        user.RecordAdminUsernameRequest(year, month);
+        await _users.UpdateAsync(user, ct);
+        await _usernameRequests.AddAsync(request, ct);
+        return Result<UsernameChangeRequestDto>.Ok(ToRequestDto(request));
     }
 
     private async Task<Result<ProfileMediaUploadUrlDto>> CreateUploadUrlAsync(
@@ -297,7 +360,9 @@ public sealed class ProfileService : IProfileService
 
     private static UsernameChangeRequestDto ToRequestDto(UsernameChangeRequest r) => new(
         r.Id, r.RequestedUsername, r.Status.ToString(),
-        r.RejectionReason, r.CreatedAt, r.ReviewedAt);
+        r.RejectionReason, r.RequestYear, r.RequestMonth, r.CreatedAt, r.UpdatedAt, r.CancelledAt, r.ReviewedAt,
+        CanEdit: r.Status == UsernameChangeStatus.Pending,
+        CanCancel: r.Status == UsernameChangeStatus.Pending);
 
     private async Task<ProfileDto> ToDtoAsync(
         User user,
@@ -325,6 +390,7 @@ public sealed class ProfileService : IProfileService
             StatusMessage: user.StatusMessage,
             Region: user.Region,
             Color: user.Color,
+            BannerFallbackColor: user.BannerFallbackColor,
             Initials: user.Initials,
             Visibility: user.Visibility.ToString(),
             ProfileType: user.ProfileType.ToString(),

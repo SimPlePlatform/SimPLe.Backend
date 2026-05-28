@@ -20,6 +20,12 @@ public sealed class UsernameChangeRequestRepository : IUsernameChangeRequestRepo
             .OrderByDescending(r => r.CreatedAt)
             .FirstOrDefaultAsync(ct);
 
+    public Task<UsernameChangeRequest?> GetByUserIdAndMonthAsync(Guid userId, int year, int month, CancellationToken ct = default) =>
+        _db.UsernameChangeRequests
+            .Where(r => r.UserId == userId && r.RequestYear == year && r.RequestMonth == month)
+            .OrderByDescending(r => r.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+
     public Task<UsernameChangeRequest?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
         _db.UsernameChangeRequests.FirstOrDefaultAsync(r => r.Id == id, ct);
 

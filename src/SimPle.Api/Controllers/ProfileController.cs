@@ -64,7 +64,7 @@ public sealed class ProfileController : ControllerBase
     [Authorize]
     [SwaggerOperation(Summary = "Change the authenticated user's username/handle",
         OperationId = "Profile_UpdateUsername", Tags = new[] { "Profile" })]
-    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(typeof(UsernameChangeResultDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status409Conflict)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -84,7 +84,7 @@ public sealed class ProfileController : ControllerBase
             if (result.Error!.Code == "Profile.UsernameTaken") return Conflict(Error(result.Error.Code, result.Error.Message));
             return BadRequest(Error(result.Error.Code, result.Error.Message));
         }
-        return NoContent();
+        return Ok(result.Value);
     }
 
     // ── Public profile ────────────────────────────────────────────────────────
@@ -183,6 +183,24 @@ public sealed class ProfileController : ControllerBase
         return Ok(result.Value);
     }
 
+    [HttpPut("me/banner/fallback")]
+    [Authorize]
+    [SwaggerOperation(Summary = "Update banner fallback color",
+        OperationId = "Profile_UpdateBannerFallback", Tags = new[] { "Profile" })]
+    [ProducesResponseType(typeof(ProfileDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> UpdateBannerFallback(
+        [FromBody] UpdateBannerFallbackRequestDto request, CancellationToken ct)
+    {
+        if (!HasCsrfHeader()) return MissingCsrfHeader();
+        if (!TryGetUserId(out var userId)) return Unauthorized();
+
+        var result = await _profile.UpdateBannerFallbackColorAsync(userId, request.Color, ct);
+        if (!result.IsSuccess) return BadRequest(Error(result.Error!.Code, result.Error.Message));
+        return Ok(result.Value);
+    }
+
     [HttpPost("me/banner/upload-url")]
     [Authorize]
     [SwaggerOperation(Summary = "Create a presigned upload URL for a banner/cover image",
@@ -259,7 +277,7 @@ public sealed class ProfileController : ControllerBase
         var result = await _profile.RequestUsernameChangeAsync(userId, request.Username, ct);
         if (!result.IsSuccess)
         {
-            if (result.Error!.Code is "Profile.UsernameTaken" or "Profile.PendingRequestExists")
+            if (result.Error!.Code is "Profile.UsernameTaken" or "Profile.PendingRequestExists" or "Profile.MonthlyAdminRequestUsed")
                 return Conflict(Error(result.Error.Code, result.Error.Message));
             return BadRequest(Error(result.Error.Code, result.Error.Message));
         }
@@ -278,6 +296,52 @@ public sealed class ProfileController : ControllerBase
         if (!TryGetUserId(out var userId)) return Unauthorized();
         var result = await _profile.GetUsernameChangeRequestAsync(userId, ct);
         if (result.Value is null) return NoContent();
+        return Ok(result.Value);
+    }
+
+    [HttpPut("me/username-change-request")]
+    [Authorize]
+    [SwaggerOperation(Summary = "Edit the current pending username change request",
+        OperationId = "Profile_EditUsernameChangeRequest", Tags = new[] { "Profile" })]
+    [ProducesResponseType(typeof(UsernameChangeRequestDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> EditUsernameChangeRequest(
+        [FromBody] UpdateUsernameRequestDto request, CancellationToken ct)
+    {
+        if (!HasCsrfHeader()) return MissingCsrfHeader();
+        if (!TryGetUserId(out var userId)) return Unauthorized();
+
+        var validator = new UpdateUsernameRequestValidator();
+        var validation = await validator.ValidateAsync(request, CancellationToken.None);
+        if (!validation.IsValid)
+            return BadRequest(Error("Validation.Failed", validation.Errors.First().ErrorMessage));
+
+        var result = await _profile.RequestUsernameChangeAsync(userId, request.Username, ct);
+        if (!result.IsSuccess)
+        {
+            if (result.Error!.Code is "Profile.UsernameTaken" or "Profile.MonthlyAdminRequestUsed")
+                return Conflict(Error(result.Error.Code, result.Error.Message));
+            return BadRequest(Error(result.Error.Code, result.Error.Message));
+        }
+        return Ok(result.Value);
+    }
+
+    [HttpDelete("me/username-change-request")]
+    [Authorize]
+    [SwaggerOperation(Summary = "Cancel the current pending username change request",
+        OperationId = "Profile_CancelUsernameChangeRequest", Tags = new[] { "Profile" })]
+    [ProducesResponseType(typeof(UsernameChangeRequestDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> CancelUsernameChangeRequest(CancellationToken ct)
+    {
+        if (!HasCsrfHeader()) return MissingCsrfHeader();
+        if (!TryGetUserId(out var userId)) return Unauthorized();
+
+        var result = await _profile.CancelUsernameChangeRequestAsync(userId, ct);
+        if (!result.IsSuccess) return BadRequest(Error(result.Error!.Code, result.Error.Message));
         return Ok(result.Value);
     }
 

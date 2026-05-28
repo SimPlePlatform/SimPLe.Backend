@@ -8,4 +8,4 @@ public sealed record UpdateProfileRequestDto(
     string? Region,
     string? StatusMessage,
     string? Visibility,  // "Public" | "FriendsOnly" | "Private"
-    string? ProfileType); // "Gamer" | "Developer"
+    string? ProfileType); // "Player" | "Developer"
