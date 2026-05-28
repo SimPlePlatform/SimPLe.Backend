@@ -595,12 +595,51 @@ public sealed class ProfileServiceTests
         var validator = new UpdateLinksRequestValidator();
         var dto = new UpdateLinksRequestDto(
         [
-            new LinkItemDto("github", "https://github.com/a", null, 0),
-            new LinkItemDto("xtwitter", "https://x.com/a", null, 1),
-            new LinkItemDto("instagram", "https://instagram.com/a", null, 2),
-            new LinkItemDto("discord", "https://discord.com/users/a", null, 3),
-            new LinkItemDto("website", "https://example.com", null, 4),
-            new LinkItemDto("website", "https://example.org", null, 5)
+            new LinkItemDto("github",    "https://github.com/a",         null, 0),
+            new LinkItemDto("xtwitter",  "https://x.com/a",              null, 1),
+            new LinkItemDto("instagram", "https://www.instagram.com/a",  null, 2),
+            new LinkItemDto("discord",   "https://discord.gg/example",   null, 3),
+            new LinkItemDto("github",    "https://github.com/b",         null, 4),
+            new LinkItemDto("xtwitter",  "https://x.com/b",              null, 5)
+        ]);
+
+        var result = await validator.ValidateAsync(dto, CancellationToken.None);
+
+        result.IsValid.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("github",    "testuser",                    "https://github.com/testuser")]
+    [InlineData("github",    "https://github.com/testuser", "https://github.com/testuser")]
+    [InlineData("xtwitter",  "testuser",                    "https://x.com/testuser")]
+    [InlineData("xtwitter",  "https://x.com/testuser",      "https://x.com/testuser")]
+    [InlineData("xtwitter",  "https://twitter.com/user",    "https://x.com/user")]
+    [InlineData("instagram", "testuser",                    "https://www.instagram.com/testuser")]
+    [InlineData("instagram", "@testuser",                   "https://www.instagram.com/testuser")]
+    public void ProfileExternalLink_NormalizeUrl_ReturnsCanonicalUrl(string platform, string input, string expected)
+    {
+        var result = ProfileExternalLink.NormalizeUrlForPlatform(platform, input);
+        result.Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("github",    "https://evil.com/user")]
+    [InlineData("xtwitter",  "https://evil.com/user")]
+    [InlineData("instagram", "https://evil.com/user")]
+    [InlineData("github",    "javascript:alert(1)")]
+    public void ProfileExternalLink_NormalizeUrl_RejectsInvalidDomain(string platform, string input)
+    {
+        var act = () => ProfileExternalLink.NormalizeUrlForPlatform(platform, input);
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public async Task LinksValidator_Website_NotAccepted()
+    {
+        var validator = new UpdateLinksRequestValidator();
+        var dto = new UpdateLinksRequestDto(
+        [
+            new LinkItemDto("website", "https://example.com", null, 0)
         ]);
 
         var result = await validator.ValidateAsync(dto, CancellationToken.None);

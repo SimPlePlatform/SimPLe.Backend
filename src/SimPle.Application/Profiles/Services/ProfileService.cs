@@ -202,9 +202,17 @@ public sealed class ProfileService : IProfileService
     public async Task<Result<IReadOnlyList<ExternalLinkDto>>> UpdateLinksAsync(
         Guid userId, UpdateLinksRequestDto request, CancellationToken ct = default)
     {
-        var newLinks = request.Links
-            .Select((l, i) => ProfileExternalLink.Create(userId, l.Platform, l.Url, l.DisplayLabel, i))
-            .ToList();
+        List<ProfileExternalLink> newLinks;
+        try
+        {
+            newLinks = request.Links
+                .Select((l, i) => ProfileExternalLink.Create(userId, l.Platform, l.Url, l.DisplayLabel, i))
+                .ToList();
+        }
+        catch (ArgumentException ex)
+        {
+            return Result<IReadOnlyList<ExternalLinkDto>>.Fail("Validation.Failed", ex.Message);
+        }
 
         await _profiles.ReplaceLinksAsync(userId, newLinks, ct);
         return Result<IReadOnlyList<ExternalLinkDto>>.Ok(newLinks.Select(ToLinkDto).ToList());
