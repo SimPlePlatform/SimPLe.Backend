@@ -7,4 +7,5 @@ public sealed record UpdateProfileRequestDto(
     string? BannerUrl,
     string? Region,
     string? StatusMessage,
-    string? Visibility);  // "Public" | "FriendsOnly" | "Private"
+    string? Visibility,  // "Public" | "FriendsOnly" | "Private"
+    string? ProfileType); // "Gamer" | "Developer"
