@@ -83,6 +83,193 @@ public sealed class ProfileEndpointsTests : IDisposable
     }
 
     [Fact]
+    public async Task AvatarUploadUrl_Unauthenticated_Returns401()
+    {
+        using var client = CreateClient();
+
+        var response = await client.PostAsJsonAsync("/api/profile/me/avatar/upload-url", new
+        {
+            FileName = "avatar.png",
+            ContentType = "image/png",
+            FileSizeBytes = 1024
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task AvatarUploadUrl_ValidRequest_ReturnsUserScopedObjectKey()
+    {
+        using var client = CreateClient();
+        var (email, username) = UniqueUser();
+        await RegisterAndLoginAsync(client, email, username);
+
+        var response = await client.PostAsJsonAsync("/api/profile/me/avatar/upload-url", new
+        {
+            FileName = "avatar.png",
+            ContentType = "image/png",
+            FileSizeBytes = 1024
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("/avatar/");
+        body.Should().Contain(".png");
+        body.Should().Contain("uploadUrl");
+    }
+
+    [Fact]
+    public async Task BannerUploadUrl_ValidRequest_ReturnsUserScopedObjectKey()
+    {
+        using var client = CreateClient();
+        var (email, username) = UniqueUser();
+        await RegisterAndLoginAsync(client, email, username);
+
+        var response = await client.PostAsJsonAsync("/api/profile/me/banner/upload-url", new
+        {
+            FileName = "banner.webp",
+            ContentType = "image/webp",
+            FileSizeBytes = 1024
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("/banner/");
+        body.Should().Contain(".webp");
+    }
+
+    [Theory]
+    [InlineData("image/svg+xml")]
+    [InlineData("image/gif")]
+    public async Task AvatarUploadUrl_InvalidContentType_Returns400(string contentType)
+    {
+        using var client = CreateClient();
+        var (email, username) = UniqueUser();
+        await RegisterAndLoginAsync(client, email, username);
+
+        var response = await client.PostAsJsonAsync("/api/profile/me/avatar/upload-url", new
+        {
+            FileName = "avatar.svg",
+            ContentType = contentType,
+            FileSizeBytes = 1024
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task AvatarUploadUrl_OversizedAvatar_Returns400()
+    {
+        using var client = CreateClient();
+        var (email, username) = UniqueUser();
+        await RegisterAndLoginAsync(client, email, username);
+
+        var response = await client.PostAsJsonAsync("/api/profile/me/avatar/upload-url", new
+        {
+            FileName = "avatar.png",
+            ContentType = "image/png",
+            FileSizeBytes = 5 * 1024 * 1024 + 1
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task BannerUploadUrl_OversizedBanner_Returns400()
+    {
+        using var client = CreateClient();
+        var (email, username) = UniqueUser();
+        await RegisterAndLoginAsync(client, email, username);
+
+        var response = await client.PostAsJsonAsync("/api/profile/me/banner/upload-url", new
+        {
+            FileName = "banner.png",
+            ContentType = "image/png",
+            FileSizeBytes = 10 * 1024 * 1024 + 1
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task ConfirmAvatarUpload_UpdatesAvatar()
+    {
+        using var client = CreateClient();
+        var (email, username) = UniqueUser();
+        await RegisterAndLoginAsync(client, email, username);
+        var objectKey = await CreateUploadObjectKeyAsync(client, "/api/profile/me/avatar/upload-url", "image/png", "avatar.png");
+
+        var response = await client.PostAsJsonAsync("/api/profile/me/avatar/confirm", new { ObjectKey = objectKey });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("\"hasUploadedAvatar\":true");
+        body.Should().NotContain("email");
+        body.Should().NotContain("passwordHash");
+    }
+
+    [Fact]
+    public async Task ConfirmBannerUpload_UpdatesBanner()
+    {
+        using var client = CreateClient();
+        var (email, username) = UniqueUser();
+        await RegisterAndLoginAsync(client, email, username);
+        var objectKey = await CreateUploadObjectKeyAsync(client, "/api/profile/me/banner/upload-url", "image/png", "banner.png");
+
+        var response = await client.PostAsJsonAsync("/api/profile/me/banner/confirm", new { ObjectKey = objectKey });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("\"hasUploadedBanner\":true");
+    }
+
+    [Fact]
+    public async Task RemoveAvatar_ClearsAvatar()
+    {
+        using var client = CreateClient();
+        var (email, username) = UniqueUser();
+        await RegisterAndLoginAsync(client, email, username);
+        var objectKey = await CreateUploadObjectKeyAsync(client, "/api/profile/me/avatar/upload-url", "image/png", "avatar.png");
+        await client.PostAsJsonAsync("/api/profile/me/avatar/confirm", new { ObjectKey = objectKey });
+
+        var response = await client.DeleteAsync("/api/profile/me/avatar");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("\"hasUploadedAvatar\":false");
+    }
+
+    [Fact]
+    public async Task RemoveBanner_ClearsBanner()
+    {
+        using var client = CreateClient();
+        var (email, username) = UniqueUser();
+        await RegisterAndLoginAsync(client, email, username);
+        var objectKey = await CreateUploadObjectKeyAsync(client, "/api/profile/me/banner/upload-url", "image/png", "banner.png");
+        await client.PostAsJsonAsync("/api/profile/me/banner/confirm", new { ObjectKey = objectKey });
+
+        var response = await client.DeleteAsync("/api/profile/me/banner");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("\"hasUploadedBanner\":false");
+    }
+
+    [Fact]
+    public async Task UpdateAvatarFallbackColor_ValidColor_ReturnsUpdatedColor()
+    {
+        using var client = CreateClient();
+        var (email, username) = UniqueUser();
+        await RegisterAndLoginAsync(client, email, username);
+
+        var response = await client.PutAsJsonAsync("/api/profile/me/avatar/fallback", new { Color = "#3366AA" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("#3366AA");
+    }
+
+    [Fact]
     public async Task UpdateMe_EmptyDisplayName_Returns400()
     {
         using var client = CreateClient();
@@ -151,6 +338,24 @@ public sealed class ProfileEndpointsTests : IDisposable
         });
 
         // Another user tries to view.
+        using var otherClient = CreateClient();
+        var response = await otherClient.GetAsync($"/api/profile/{username}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task GetPublicProfile_FriendsOnlyUser_Returns403ForOthers()
+    {
+        using var ownerClient = CreateClient();
+        var (email, username) = UniqueUser();
+        await RegisterAndLoginAsync(ownerClient, email, username);
+        await ownerClient.PutAsJsonAsync("/api/profile/me", new
+        {
+            DisplayName = "Friends Only User",
+            Visibility = "FriendsOnly"
+        });
+
         using var otherClient = CreateClient();
         var response = await otherClient.GetAsync($"/api/profile/{username}");
 
@@ -315,6 +520,25 @@ public sealed class ProfileEndpointsTests : IDisposable
             CaptchaToken = "test-captcha-token"
         });
     }
+
+    private static async Task<string> CreateUploadObjectKeyAsync(
+        HttpClient client,
+        string path,
+        string contentType,
+        string fileName)
+    {
+        var response = await client.PostAsJsonAsync(path, new
+        {
+            FileName = fileName,
+            ContentType = contentType,
+            FileSizeBytes = 1024
+        });
+        response.EnsureSuccessStatusCode();
+        var json = await response.Content.ReadFromJsonAsync<UploadUrlResponse>();
+        return json!.ObjectKey;
+    }
+
+    private sealed record UploadUrlResponse(string ObjectKey);
 
     public void Dispose() => _factory.Dispose();
 }

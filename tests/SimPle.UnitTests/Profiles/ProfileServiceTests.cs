@@ -1,11 +1,12 @@
 using FluentAssertions;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 using SimPle.Application.Common.Interfaces;
+using SimPle.Application.Common.Options;
 using SimPle.Application.Profiles.DTOs;
 using SimPle.Domain.Profiles;
 using SimPle.Application.Profiles.Services;
 using SimPle.Application.Profiles.Validators;
-using SimPle.Domain.Profiles;
 using SimPle.Domain.Users;
 
 namespace SimPle.UnitTests.Profiles;
@@ -15,14 +16,26 @@ public sealed class ProfileServiceTests
     private readonly IUserRepository _users = Substitute.For<IUserRepository>();
     private readonly IProfileRepository _profiles = Substitute.For<IProfileRepository>();
     private readonly IUsernameChangeRequestRepository _usernameRequests = Substitute.For<IUsernameChangeRequestRepository>();
+    private readonly IFileStorageService _storage = Substitute.For<IFileStorageService>();
     private readonly ProfileService _service;
+    private readonly AwsOptions _aws = new()
+    {
+        S3ProfilePrefix = "profile-assets",
+        S3UploadUrlExpiryMinutes = 10,
+        S3ReadUrlExpiryMinutes = 15
+    };
 
     public ProfileServiceTests()
     {
         _profiles.GetLinksByUserIdAsync(Arg.Any<Guid>()).Returns((IReadOnlyList<ProfileExternalLink>)[]);
         _profiles.GetInterestsByUserIdAsync(Arg.Any<Guid>()).Returns((IReadOnlyList<ProfileInterestTag>)[]);
         _usernameRequests.GetPendingByUserIdAsync(Arg.Any<Guid>()).Returns((UsernameChangeRequest?)null);
-        _service = new ProfileService(_users, _profiles, _usernameRequests);
+        _storage.CreatePresignedPutUrlAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan>())
+            .Returns(x => $"https://upload.example.test/{x.ArgAt<string>(0)}");
+        _storage.CreatePresignedReadUrlAsync(Arg.Any<string>(), Arg.Any<TimeSpan>())
+            .Returns(x => $"https://read.example.test/{x.ArgAt<string>(0)}");
+        _storage.ObjectExistsAsync(Arg.Any<string>()).Returns(true);
+        _service = new ProfileService(_users, _profiles, _usernameRequests, _storage, Options.Create(_aws));
     }
 
     private static User MakeUser(string username = "testuser") =>
@@ -199,7 +212,7 @@ public sealed class ProfileServiceTests
 
         result.IsSuccess.Should().BeTrue();
         result.Value!.Should().HaveCount(2);
-        result.Value[0].Platform.Should().Be("github");
+        result.Value![0].Platform.Should().Be("github");
         await _profiles.Received(1).ReplaceLinksAsync(userId, Arg.Is<IReadOnlyList<ProfileExternalLink>>(l => l.Count == 2));
     }
 
@@ -253,6 +266,159 @@ public sealed class ProfileServiceTests
             null, "EU-West", null, "Public");
         var result = await validator.ValidateAsync(dto, CancellationToken.None);
         result.IsValid.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task CreateAvatarUploadUrl_ValidImage_ReturnsUserScopedKey()
+    {
+        var user = MakeUser();
+        _users.GetByIdAsync(user.Id).Returns(user);
+
+        var result = await _service.CreateAvatarUploadUrlAsync(user.Id,
+            new ProfileMediaUploadUrlRequestDto("avatar.png", "image/png", 1024));
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.ObjectKey.Should().StartWith($"profile-assets/users/{user.Id}/avatar/");
+        result.Value.ObjectKey.Should().EndWith(".png");
+    }
+
+    [Fact]
+    public async Task CreateBannerUploadUrl_ValidImage_ReturnsUserScopedKey()
+    {
+        var user = MakeUser();
+        _users.GetByIdAsync(user.Id).Returns(user);
+
+        var result = await _service.CreateBannerUploadUrlAsync(user.Id,
+            new ProfileMediaUploadUrlRequestDto("banner.webp", "image/webp", 1024));
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.ObjectKey.Should().StartWith($"profile-assets/users/{user.Id}/banner/");
+        result.Value.ObjectKey.Should().EndWith(".webp");
+    }
+
+    [Theory]
+    [InlineData("image/svg+xml")]
+    [InlineData("image/gif")]
+    [InlineData("text/plain")]
+    public async Task CreateAvatarUploadUrl_InvalidContentType_Fails(string contentType)
+    {
+        var user = MakeUser();
+        _users.GetByIdAsync(user.Id).Returns(user);
+
+        var result = await _service.CreateAvatarUploadUrlAsync(user.Id,
+            new ProfileMediaUploadUrlRequestDto("avatar.svg", contentType, 1024));
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error!.Code.Should().Be("Validation.Failed");
+    }
+
+    [Fact]
+    public async Task CreateAvatarUploadUrl_OversizedAvatar_Fails()
+    {
+        var user = MakeUser();
+        _users.GetByIdAsync(user.Id).Returns(user);
+
+        var result = await _service.CreateAvatarUploadUrlAsync(user.Id,
+            new ProfileMediaUploadUrlRequestDto("avatar.png", "image/png", 5 * 1024 * 1024 + 1));
+
+        result.IsSuccess.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task CreateBannerUploadUrl_OversizedBanner_Fails()
+    {
+        var user = MakeUser();
+        _users.GetByIdAsync(user.Id).Returns(user);
+
+        var result = await _service.CreateBannerUploadUrlAsync(user.Id,
+            new ProfileMediaUploadUrlRequestDto("banner.png", "image/png", 10 * 1024 * 1024 + 1));
+
+        result.IsSuccess.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ConfirmAvatarUpload_UserScopedObjectKey_UpdatesProfile()
+    {
+        var user = MakeUser();
+        var key = $"profile-assets/users/{user.Id}/avatar/file.png";
+        _users.GetByIdAsync(user.Id).Returns(user);
+
+        var result = await _service.ConfirmAvatarUploadAsync(user.Id, key);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.HasUploadedAvatar.Should().BeTrue();
+        result.Value.AvatarUrl.Should().Contain(key);
+        await _users.Received(1).UpdateAsync(Arg.Is<User>(u => u.AvatarObjectKey == key));
+    }
+
+    [Fact]
+    public async Task ConfirmBannerUpload_UserScopedObjectKey_UpdatesProfile()
+    {
+        var user = MakeUser();
+        var key = $"profile-assets/users/{user.Id}/banner/file.png";
+        _users.GetByIdAsync(user.Id).Returns(user);
+
+        var result = await _service.ConfirmBannerUploadAsync(user.Id, key);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.HasUploadedBanner.Should().BeTrue();
+        result.Value.BannerUrl.Should().Contain(key);
+        await _users.Received(1).UpdateAsync(Arg.Is<User>(u => u.BannerObjectKey == key));
+    }
+
+    [Fact]
+    public async Task ConfirmAvatarUpload_ObjectKeyForDifferentUser_Fails()
+    {
+        var user = MakeUser();
+        _users.GetByIdAsync(user.Id).Returns(user);
+
+        var result = await _service.ConfirmAvatarUploadAsync(user.Id,
+            $"profile-assets/users/{Guid.NewGuid()}/avatar/file.png");
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error!.Code.Should().Be("Validation.Failed");
+    }
+
+    [Fact]
+    public async Task RemoveAvatar_ClearsObjectKeyAndReturnsFallback()
+    {
+        var user = MakeUser();
+        user.SetAvatarMedia($"profile-assets/users/{user.Id}/avatar/file.png");
+        _users.GetByIdAsync(user.Id).Returns(user);
+
+        var result = await _service.RemoveAvatarAsync(user.Id);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.HasUploadedAvatar.Should().BeFalse();
+        result.Value.AvatarUrl.Should().BeNull();
+        await _storage.Received(1).DeleteObjectAsync(Arg.Any<string>());
+    }
+
+    [Fact]
+    public async Task RemoveBanner_ClearsObjectKeyAndReturnsFallback()
+    {
+        var user = MakeUser();
+        user.SetBannerMedia($"profile-assets/users/{user.Id}/banner/file.png");
+        _users.GetByIdAsync(user.Id).Returns(user);
+
+        var result = await _service.RemoveBannerAsync(user.Id);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.HasUploadedBanner.Should().BeFalse();
+        result.Value.BannerUrl.Should().BeNull();
+        await _storage.Received(1).DeleteObjectAsync(Arg.Any<string>());
+    }
+
+    [Fact]
+    public async Task UpdateAvatarFallbackColor_ValidColor_UpdatesColor()
+    {
+        var user = MakeUser();
+        _users.GetByIdAsync(user.Id).Returns(user);
+
+        var result = await _service.UpdateAvatarFallbackColorAsync(user.Id, "#3366AA");
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.Color.Should().Be("#3366AA");
     }
 
     [Theory]

@@ -60,12 +60,14 @@ public sealed class TestWebApplicationFactory : WebApplicationFactory<Program>
             services.RemoveAll<ICaptchaVerificationService>();
             services.RemoveAll<IEmailService>();
             services.RemoveAll<IGoogleTokenValidationService>();
+            services.RemoveAll<IFileStorageService>();
             services.AddDbContext<AppDbContext>(options =>
                 options.UseInMemoryDatabase(_databaseName));
             services.AddSingleton<ICaptchaVerificationService>(
                 new TestCaptchaVerificationService(_captchaSucceeds));
             services.AddSingleton<IEmailService>(EmailCapture);
             services.AddSingleton<IGoogleTokenValidationService>(GoogleValidator);
+            services.AddSingleton<IFileStorageService>(new TestFileStorageService());
         });
     }
 
@@ -101,6 +103,31 @@ public sealed class TestWebApplicationFactory : WebApplicationFactory<Program>
     {
         public Task<bool> VerifyAsync(string responseToken, string? remoteIpAddress, CancellationToken ct = default) =>
             Task.FromResult(succeeds && responseToken == "test-captcha-token");
+    }
+
+    private sealed class TestFileStorageService : IFileStorageService
+    {
+        private readonly HashSet<string> _existingObjects = [];
+
+        public Task<string> CreatePresignedPutUrlAsync(
+            string objectKey, string contentType, TimeSpan expiresIn, CancellationToken ct = default)
+        {
+            _existingObjects.Add(objectKey);
+            return Task.FromResult($"https://s3-upload.test/{Uri.EscapeDataString(objectKey)}");
+        }
+
+        public Task<string> CreatePresignedReadUrlAsync(
+            string objectKey, TimeSpan expiresIn, CancellationToken ct = default) =>
+            Task.FromResult($"https://s3-read.test/{Uri.EscapeDataString(objectKey)}");
+
+        public Task<bool> ObjectExistsAsync(string objectKey, CancellationToken ct = default) =>
+            Task.FromResult(_existingObjects.Contains(objectKey));
+
+        public Task DeleteObjectAsync(string objectKey, CancellationToken ct = default)
+        {
+            _existingObjects.Remove(objectKey);
+            return Task.CompletedTask;
+        }
     }
 
     /// <summary>
