@@ -89,15 +89,13 @@ public class User : Entity
     }
 
     public void UpdateProfile(
-        string displayName, string? bio, string? avatarUrl, string? bannerUrl,
+        string displayName, string? bio,
         string? region = null, string? statusMessage = null,
         ProfileVisibility? visibility = null,
         ProfileType? profileType = null)
     {
         DisplayName = displayName;
         Bio = bio;
-        AvatarUrl = avatarUrl;
-        BannerUrl = bannerUrl;
         Initials = BuildInitials(displayName);
         if (region is not null) Region = region;
         StatusMessage = statusMessage;

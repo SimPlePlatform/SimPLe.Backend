@@ -18,16 +18,6 @@ public sealed class UpdateProfileRequestValidator : AbstractValidator<UpdateProf
             .MaximumLength(400)
             .When(x => x.Bio is not null);
 
-        RuleFor(x => x.AvatarUrl)
-            .MaximumLength(512)
-            .Must(BeAValidUrl).WithMessage("Avatar must be a valid https URL.")
-            .When(x => !string.IsNullOrEmpty(x.AvatarUrl));
-
-        RuleFor(x => x.BannerUrl)
-            .MaximumLength(512)
-            .Must(BeAValidUrl).WithMessage("Banner must be a valid https URL.")
-            .When(x => !string.IsNullOrEmpty(x.BannerUrl));
-
         RuleFor(x => x.Region)
             .MaximumLength(64)
             .When(x => x.Region is not null);
@@ -44,8 +34,4 @@ public sealed class UpdateProfileRequestValidator : AbstractValidator<UpdateProf
             .Must(v => v is null || AllowedProfileTypes.Contains(v))
             .WithMessage($"Profile type must be one of: {string.Join(", ", AllowedProfileTypes)}.");
     }
-
-    private static bool BeAValidUrl(string? url) =>
-        Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
-        uri.Scheme is "https";
 }

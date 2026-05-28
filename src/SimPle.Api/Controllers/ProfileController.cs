@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using SimPle.Api.Models;
 using SimPle.Application.Profiles.DTOs;
 using SimPle.Application.Profiles.Services;
@@ -40,6 +41,7 @@ public sealed class ProfileController : ControllerBase
 
     [HttpPut("me")]
     [Authorize]
+    [EnableRateLimiting("profile-update")]
     [SwaggerOperation(Summary = "Update the authenticated user's profile",
         OperationId = "Profile_UpdateMe", Tags = new[] { "Profile" })]
     [ProducesResponseType(typeof(ProfileDto), StatusCodes.Status200OK)]
@@ -62,6 +64,7 @@ public sealed class ProfileController : ControllerBase
 
     [HttpPut("me/username")]
     [Authorize]
+    [EnableRateLimiting("profile-username")]
     [SwaggerOperation(Summary = "Change the authenticated user's username/handle",
         OperationId = "Profile_UpdateUsername", Tags = new[] { "Profile" })]
     [ProducesResponseType(typeof(UsernameChangeResultDto), StatusCodes.Status200OK)]
@@ -257,6 +260,7 @@ public sealed class ProfileController : ControllerBase
 
     [HttpPost("me/username-change-request")]
     [Authorize]
+    [EnableRateLimiting("profile-username")]
     [SwaggerOperation(Summary = "Submit a request to change username (requires admin approval)",
         OperationId = "Profile_RequestUsernameChange", Tags = new[] { "Profile" })]
     [ProducesResponseType(typeof(UsernameChangeRequestDto), StatusCodes.Status201Created)]

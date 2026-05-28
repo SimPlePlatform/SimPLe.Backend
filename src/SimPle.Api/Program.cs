@@ -226,6 +226,9 @@ builder.Services.AddRateLimiter(options =>
     options.AddPolicy("auth-forgot-password", context => AuthWindow(context, 3, TimeSpan.FromMinutes(10)));
     options.AddPolicy("auth-reset-password", context => AuthWindow(context, 5, TimeSpan.FromMinutes(10)));
     options.AddPolicy("auth-google", context => AuthWindow(context, 10, TimeSpan.FromMinutes(1)));
+    // Profile mutation: generous but bounded to prevent username enumeration and spam updates.
+    options.AddPolicy("profile-update", context => AuthWindow(context, 30, TimeSpan.FromMinutes(1)));
+    options.AddPolicy("profile-username", context => AuthWindow(context, 5, TimeSpan.FromMinutes(1)));
 });
 
 var app = builder.Build();

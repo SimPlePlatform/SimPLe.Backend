@@ -76,8 +76,6 @@ public sealed class ProfileService : IProfileService
         user.UpdateProfile(
             request.DisplayName,
             request.Bio,
-            request.AvatarUrl,
-            request.BannerUrl,
             request.Region,
             request.StatusMessage,
             visibility,
