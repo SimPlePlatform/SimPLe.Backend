@@ -396,7 +396,7 @@ public sealed class ProfileService : IProfileService
             HasUploadedAvatar: !string.IsNullOrWhiteSpace(user.AvatarObjectKey),
             HasUploadedBanner: !string.IsNullOrWhiteSpace(user.BannerObjectKey),
             StatusMessage: user.StatusMessage,
-            Region: user.Region,
+            Region: string.Equals(user.Region, "eu-west", StringComparison.OrdinalIgnoreCase) ? string.Empty : user.Region,
             Color: user.Color,
             BannerFallbackColor: user.BannerFallbackColor,
             Initials: user.Initials,
