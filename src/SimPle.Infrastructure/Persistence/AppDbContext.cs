@@ -16,6 +16,7 @@ public class AppDbContext : DbContext
     // Module 2 — profile social identity
     public DbSet<ProfileExternalLink> ProfileExternalLinks => Set<ProfileExternalLink>();
     public DbSet<ProfileInterestTag> ProfileInterestTags => Set<ProfileInterestTag>();
+    public DbSet<UsernameChangeRequest> UsernameChangeRequests => Set<UsernameChangeRequest>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

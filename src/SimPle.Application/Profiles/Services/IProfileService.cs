@@ -9,6 +9,8 @@ public interface IProfileService
     Task<Result<ProfileDto>> GetPublicProfileAsync(string username, Guid? requesterId, CancellationToken ct = default);
     Task<Result<ProfileDto>> UpdateProfileAsync(Guid userId, UpdateProfileRequestDto request, CancellationToken ct = default);
     Task<Result> UpdateUsernameAsync(Guid userId, string newUsername, CancellationToken ct = default);
+    Task<Result<UsernameChangeRequestDto>> RequestUsernameChangeAsync(Guid userId, string requestedUsername, CancellationToken ct = default);
+    Task<Result<UsernameChangeRequestDto?>> GetUsernameChangeRequestAsync(Guid userId, CancellationToken ct = default);
     Task<Result<IReadOnlyList<ExternalLinkDto>>> GetLinksAsync(Guid userId, CancellationToken ct = default);
     Task<Result<IReadOnlyList<ExternalLinkDto>>> UpdateLinksAsync(Guid userId, UpdateLinksRequestDto request, CancellationToken ct = default);
     Task<Result<IReadOnlyList<string>>> GetInterestsAsync(Guid userId, CancellationToken ct = default);

@@ -8,6 +8,7 @@ using SimPle.Infrastructure.Auth;
 using SimPle.Infrastructure.Email;
 using SimPle.Infrastructure.Persistence;
 using SimPle.Infrastructure.Persistence.Repositories;
+using SimPle.Infrastructure.Storage;
 
 namespace SimPle.Infrastructure;
 
@@ -35,6 +36,9 @@ public static class DependencyInjection
         services.AddScoped<IEmailService, SmtpEmailService>();
         services.AddScoped<IGoogleTokenValidationService, GoogleTokenValidationService>();
         services.AddScoped<IProfileRepository, ProfileRepository>();
+        services.AddScoped<IUsernameChangeRequestRepository, UsernameChangeRequestRepository>();
+        services.Configure<AwsOptions>(configuration.GetSection(AwsOptions.SectionName));
+        services.AddScoped<IFileStorageService, S3FileStorageService>();
         services.AddHttpClient<ICaptchaVerificationService, GoogleRecaptchaV2Service>();
 
         services.Configure<TokenCleanupOptions>(

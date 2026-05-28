@@ -18,7 +18,7 @@ public class User : Entity
     public int Level { get; private set; } = 1;
     public long Xp { get; private set; }
     public int Elo { get; private set; } = 1200;
-    public string Region { get; private set; } = "EU-West";
+    public string Region { get; private set; } = string.Empty;
     public UserStatus Status { get; private set; } = UserStatus.Offline;
     public UserRole Role { get; private set; } = UserRole.Player;
     public bool IsEmailVerified { get; private set; }

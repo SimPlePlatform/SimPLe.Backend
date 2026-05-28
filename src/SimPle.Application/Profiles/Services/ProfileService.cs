@@ -10,11 +10,16 @@ public sealed class ProfileService : IProfileService
 {
     private readonly IUserRepository _users;
     private readonly IProfileRepository _profiles;
+    private readonly IUsernameChangeRequestRepository _usernameRequests;
 
-    public ProfileService(IUserRepository users, IProfileRepository profiles)
+    public ProfileService(
+        IUserRepository users,
+        IProfileRepository profiles,
+        IUsernameChangeRequestRepository usernameRequests)
     {
         _users = users;
         _profiles = profiles;
+        _usernameRequests = usernameRequests;
     }
 
     public async Task<Result<ProfileDto>> GetMyProfileAsync(Guid userId, CancellationToken ct = default)
@@ -123,6 +128,46 @@ public sealed class ProfileService : IProfileService
         await _profiles.ReplaceInterestsAsync(userId, tags, ct);
         return Result<IReadOnlyList<string>>.Ok(tags.Select(t => t.Name).ToList());
     }
+
+    public async Task<Result<UsernameChangeRequestDto>> RequestUsernameChangeAsync(
+        Guid userId, string requestedUsername, CancellationToken ct = default)
+    {
+        var normalized = requestedUsername.Trim().ToUpperInvariant();
+
+        // Block if a pending request already exists.
+        var existing = await _usernameRequests.GetPendingByUserIdAsync(userId, ct);
+        if (existing is not null)
+            return Result<UsernameChangeRequestDto>.Fail("Profile.PendingRequestExists",
+                "You already have a pending username change request.");
+
+        // Username must not already be taken.
+        if (await _users.ExistsByUsernameAsync(normalized, ct))
+            return Result<UsernameChangeRequestDto>.Fail("Profile.UsernameTaken",
+                "That username is already in use.");
+
+        var user = await _users.GetByIdAsync(userId, ct);
+        if (user is null)
+            return Result<UsernameChangeRequestDto>.Fail("General.NotFound", "User not found.");
+
+        if (user.NormalizedUsername == normalized)
+            return Result<UsernameChangeRequestDto>.Fail("Profile.SameUsername",
+                "The requested username is the same as your current one.");
+
+        var request = UsernameChangeRequest.Create(userId, requestedUsername);
+        await _usernameRequests.AddAsync(request, ct);
+        return Result<UsernameChangeRequestDto>.Ok(ToRequestDto(request));
+    }
+
+    public async Task<Result<UsernameChangeRequestDto?>> GetUsernameChangeRequestAsync(
+        Guid userId, CancellationToken ct = default)
+    {
+        var request = await _usernameRequests.GetLatestByUserIdAsync(userId, ct);
+        return Result<UsernameChangeRequestDto?>.Ok(request is null ? null : ToRequestDto(request));
+    }
+
+    private static UsernameChangeRequestDto ToRequestDto(UsernameChangeRequest r) => new(
+        r.Id, r.RequestedUsername, r.Status.ToString(),
+        r.RejectionReason, r.CreatedAt, r.ReviewedAt);
 
     private static ProfileDto ToDto(
         User user,

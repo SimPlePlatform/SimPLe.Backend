@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using SimPle.Api.Models;
+using SimPle.Application.Common.Interfaces;
 using SimPle.Application.Profiles.DTOs;
 using SimPle.Application.Profiles.Services;
 using SimPle.Application.Profiles.Validators;
@@ -16,8 +17,16 @@ namespace SimPle.Api.Controllers;
 public sealed class ProfileController : ControllerBase
 {
     private readonly IProfileService _profile;
+    private readonly IFileStorageService _storage;
 
-    public ProfileController(IProfileService profile) => _profile = profile;
+    private static readonly string[] AllowedImageTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+    private const long MaxAvatarBytes = 5 * 1024 * 1024; // 5 MB
+
+    public ProfileController(IProfileService profile, IFileStorageService storage)
+    {
+        _profile = profile;
+        _storage = storage;
+    }
 
     // ── Current user profile ──────────────────────────────────────────────────
 
@@ -105,6 +114,128 @@ public sealed class ProfileController : ControllerBase
                 _ => StatusCode(StatusCodes.Status403Forbidden, Error(result.Error.Code, result.Error.Message))
             };
         }
+        return Ok(result.Value);
+    }
+
+    // ── Avatar / banner upload ────────────────────────────────────────────────
+
+    [HttpPost("me/avatar")]
+    [Authorize]
+    [RequestSizeLimit(6 * 1024 * 1024)]
+    [SwaggerOperation(Summary = "Upload a new avatar image (max 5 MB, JPEG/PNG/WebP/GIF)",
+        OperationId = "Profile_UploadAvatar", Tags = new[] { "Profile" })]
+    [ProducesResponseType(typeof(ProfileDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> UploadAvatar(IFormFile file, CancellationToken ct)
+    {
+        if (!HasCsrfHeader()) return MissingCsrfHeader();
+        if (!TryGetUserId(out var userId)) return Unauthorized();
+
+        if (file is null || file.Length == 0)
+            return BadRequest(Error("Validation.Failed", "No file provided."));
+        if (file.Length > MaxAvatarBytes)
+            return BadRequest(Error("Validation.Failed", "Avatar must be 5 MB or smaller."));
+        if (!AllowedImageTypes.Contains(file.ContentType.ToLowerInvariant()))
+            return BadRequest(Error("Validation.Failed", "Only JPEG, PNG, WebP, and GIF images are accepted."));
+
+        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+        var key = $"avatars/{userId}/{Guid.NewGuid():N}{ext}";
+
+        await using var stream = file.OpenReadStream();
+        var url = await _storage.UploadAsync(stream, key, file.ContentType, ct);
+
+        var profile = await _profile.GetMyProfileAsync(userId, ct);
+        if (!profile.IsSuccess) return NotFound(Error("General.NotFound", "User not found."));
+
+        var result = await _profile.UpdateProfileAsync(userId, new UpdateProfileRequestDto(
+            profile.Value!.DisplayName, profile.Value.Bio, url, profile.Value.BannerUrl,
+            profile.Value.Region, profile.Value.StatusMessage, profile.Value.Visibility), ct);
+
+        if (!result.IsSuccess) return BadRequest(Error(result.Error!.Code, result.Error.Message));
+        return Ok(result.Value);
+    }
+
+    [HttpPost("me/banner")]
+    [Authorize]
+    [RequestSizeLimit(10 * 1024 * 1024)]
+    [SwaggerOperation(Summary = "Upload a new banner/cover image (max 8 MB, JPEG/PNG/WebP)",
+        OperationId = "Profile_UploadBanner", Tags = new[] { "Profile" })]
+    [ProducesResponseType(typeof(ProfileDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> UploadBanner(IFormFile file, CancellationToken ct)
+    {
+        if (!HasCsrfHeader()) return MissingCsrfHeader();
+        if (!TryGetUserId(out var userId)) return Unauthorized();
+
+        if (file is null || file.Length == 0)
+            return BadRequest(Error("Validation.Failed", "No file provided."));
+        if (file.Length > 8 * 1024 * 1024)
+            return BadRequest(Error("Validation.Failed", "Banner must be 8 MB or smaller."));
+        if (!AllowedImageTypes.Contains(file.ContentType.ToLowerInvariant()))
+            return BadRequest(Error("Validation.Failed", "Only JPEG, PNG, WebP, and GIF images are accepted."));
+
+        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+        var key = $"banners/{userId}/{Guid.NewGuid():N}{ext}";
+
+        await using var stream = file.OpenReadStream();
+        var url = await _storage.UploadAsync(stream, key, file.ContentType, ct);
+
+        var profile = await _profile.GetMyProfileAsync(userId, ct);
+        if (!profile.IsSuccess) return NotFound(Error("General.NotFound", "User not found."));
+
+        var result = await _profile.UpdateProfileAsync(userId, new UpdateProfileRequestDto(
+            profile.Value!.DisplayName, profile.Value.Bio, profile.Value.AvatarUrl, url,
+            profile.Value.Region, profile.Value.StatusMessage, profile.Value.Visibility), ct);
+
+        if (!result.IsSuccess) return BadRequest(Error(result.Error!.Code, result.Error.Message));
+        return Ok(result.Value);
+    }
+
+    // ── Username change request ───────────────────────────────────────────────
+
+    [HttpPost("me/username-change-request")]
+    [Authorize]
+    [SwaggerOperation(Summary = "Submit a request to change username (requires admin approval)",
+        OperationId = "Profile_RequestUsernameChange", Tags = new[] { "Profile" })]
+    [ProducesResponseType(typeof(UsernameChangeRequestDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> RequestUsernameChange(
+        [FromBody] UpdateUsernameRequestDto request, CancellationToken ct)
+    {
+        if (!HasCsrfHeader()) return MissingCsrfHeader();
+        if (!TryGetUserId(out var userId)) return Unauthorized();
+
+        var validator = new UpdateUsernameRequestValidator();
+        var validation = await validator.ValidateAsync(request, CancellationToken.None);
+        if (!validation.IsValid)
+            return BadRequest(Error("Validation.Failed", validation.Errors.First().ErrorMessage));
+
+        var result = await _profile.RequestUsernameChangeAsync(userId, request.Username, ct);
+        if (!result.IsSuccess)
+        {
+            if (result.Error!.Code is "Profile.UsernameTaken" or "Profile.PendingRequestExists")
+                return Conflict(Error(result.Error.Code, result.Error.Message));
+            return BadRequest(Error(result.Error.Code, result.Error.Message));
+        }
+        return CreatedAtAction(nameof(GetMyUsernameChangeRequest), result.Value);
+    }
+
+    [HttpGet("me/username-change-request")]
+    [Authorize]
+    [SwaggerOperation(Summary = "Get the current user's latest username change request",
+        OperationId = "Profile_GetUsernameChangeRequest", Tags = new[] { "Profile" })]
+    [ProducesResponseType(typeof(UsernameChangeRequestDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> GetMyUsernameChangeRequest(CancellationToken ct)
+    {
+        if (!TryGetUserId(out var userId)) return Unauthorized();
+        var result = await _profile.GetUsernameChangeRequestAsync(userId, ct);
+        if (result.Value is null) return NoContent();
         return Ok(result.Value);
     }
 

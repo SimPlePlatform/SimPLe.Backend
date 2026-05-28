@@ -2,6 +2,7 @@ using FluentAssertions;
 using NSubstitute;
 using SimPle.Application.Common.Interfaces;
 using SimPle.Application.Profiles.DTOs;
+using SimPle.Domain.Profiles;
 using SimPle.Application.Profiles.Services;
 using SimPle.Application.Profiles.Validators;
 using SimPle.Domain.Profiles;
@@ -13,13 +14,15 @@ public sealed class ProfileServiceTests
 {
     private readonly IUserRepository _users = Substitute.For<IUserRepository>();
     private readonly IProfileRepository _profiles = Substitute.For<IProfileRepository>();
+    private readonly IUsernameChangeRequestRepository _usernameRequests = Substitute.For<IUsernameChangeRequestRepository>();
     private readonly ProfileService _service;
 
     public ProfileServiceTests()
     {
         _profiles.GetLinksByUserIdAsync(Arg.Any<Guid>()).Returns((IReadOnlyList<ProfileExternalLink>)[]);
         _profiles.GetInterestsByUserIdAsync(Arg.Any<Guid>()).Returns((IReadOnlyList<ProfileInterestTag>)[]);
-        _service = new ProfileService(_users, _profiles);
+        _usernameRequests.GetPendingByUserIdAsync(Arg.Any<Guid>()).Returns((UsernameChangeRequest?)null);
+        _service = new ProfileService(_users, _profiles, _usernameRequests);
     }
 
     private static User MakeUser(string username = "testuser") =>
