@@ -34,6 +34,7 @@ public static class DependencyInjection
         services.AddScoped<IPasswordResetTokenRepository, PasswordResetTokenRepository>();
         services.AddScoped<IEmailService, SmtpEmailService>();
         services.AddScoped<IGoogleTokenValidationService, GoogleTokenValidationService>();
+        services.AddScoped<IProfileRepository, ProfileRepository>();
         services.AddHttpClient<ICaptchaVerificationService, GoogleRecaptchaV2Service>();
 
         services.Configure<TokenCleanupOptions>(

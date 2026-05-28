@@ -26,6 +26,10 @@ public class User : Entity
     public DateTime? SuspendedUntil { get; private set; }
     public SubscriptionTier SubscriptionTier { get; private set; } = SubscriptionTier.Free;
 
+    // Profile social identity
+    public string? StatusMessage { get; private set; }
+    public ProfileVisibility Visibility { get; private set; } = ProfileVisibility.Public;
+
     // Auth security fields
     public int FailedLoginCount { get; private set; }
     public DateTime? LockoutEnd { get; private set; }
@@ -76,13 +80,26 @@ public class User : Entity
         Touch();
     }
 
-    public void UpdateProfile(string displayName, string? bio, string? avatarUrl, string? bannerUrl)
+    public void UpdateProfile(
+        string displayName, string? bio, string? avatarUrl, string? bannerUrl,
+        string? region = null, string? statusMessage = null,
+        ProfileVisibility? visibility = null)
     {
         DisplayName = displayName;
         Bio = bio;
         AvatarUrl = avatarUrl;
         BannerUrl = bannerUrl;
         Initials = BuildInitials(displayName);
+        if (region is not null) Region = region;
+        StatusMessage = statusMessage;
+        if (visibility.HasValue) Visibility = visibility.Value;
+        Touch();
+    }
+
+    public void UpdateUsername(string newUsername)
+    {
+        Username = newUsername.Trim();
+        NormalizedUsername = newUsername.Trim().ToUpperInvariant();
         Touch();
     }
 
@@ -142,3 +159,4 @@ public class User : Entity
 public enum UserStatus { Offline, Online, Away, Playing, InLobby }
 public enum UserRole { Player, Moderator, Admin }
 public enum SubscriptionTier { Free, Plus, Pro }
+public enum ProfileVisibility { Public, FriendsOnly, Private }

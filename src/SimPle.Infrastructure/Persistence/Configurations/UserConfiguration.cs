@@ -24,9 +24,12 @@ public sealed class UserConfiguration : IEntityTypeConfiguration<User>
         builder.Property(u => u.Initials).HasMaxLength(4).IsRequired();
         builder.Property(u => u.Region).HasMaxLength(50).IsRequired();
 
+        builder.Property(u => u.StatusMessage).HasMaxLength(100);
+
         builder.Property(u => u.Role).HasConversion<string>();
         builder.Property(u => u.Status).HasConversion<string>();
         builder.Property(u => u.SubscriptionTier).HasConversion<string>();
+        builder.Property(u => u.Visibility).HasConversion<string>().HasDefaultValue(ProfileVisibility.Public);
 
         builder.Property(u => u.GoogleId).HasMaxLength(255);
 
