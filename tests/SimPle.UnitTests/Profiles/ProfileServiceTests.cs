@@ -7,6 +7,7 @@ using SimPle.Application.Profiles.DTOs;
 using SimPle.Domain.Profiles;
 using SimPle.Application.Profiles.Services;
 using SimPle.Application.Profiles.Validators;
+using SimPle.Domain.Friends;
 using SimPle.Domain.Users;
 
 namespace SimPle.UnitTests.Profiles;
@@ -121,6 +122,44 @@ public sealed class ProfileServiceTests
 
         result.IsSuccess.Should().BeFalse();
         result.Error!.Code.Should().Be("Profile.FriendsOnly");
+    }
+
+    [Fact]
+    public async Task GetPublicProfile_FriendsOnly_VisibleToFriendInModule3()
+    {
+        var user = MakeUser();
+        var requesterId = Guid.NewGuid();
+        user.UpdateProfile("Test", null, visibility: ProfileVisibility.FriendsOnly);
+        _users.GetByNormalizedUsernameAsync("TESTUSER").Returns(user);
+        var friends = Substitute.For<IFriendRepository>();
+        friends.AreFriendsAsync(user.Id, requesterId).Returns(true);
+        friends.AreFriendsAsync(requesterId, user.Id).Returns(true);
+        friends.IsBlockedEitherDirectionAsync(user.Id, requesterId).Returns(false);
+        friends.CountFriendsAsync(user.Id).Returns(1);
+        friends.GetBlockAsync(Arg.Any<Guid>(), Arg.Any<Guid>()).Returns((UserBlock?)null);
+        var service = new ProfileService(_users, _profiles, _usernameRequests, _storage, Options.Create(_storageOptions), friends);
+
+        var result = await service.GetPublicProfileAsync("testuser", requesterId);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.FriendCount.Should().Be(1);
+        result.Value.FriendshipStatus.Should().Be("Friends");
+    }
+
+    [Fact]
+    public async Task GetPublicProfile_BlockedViewer_HiddenEvenWhenPublic()
+    {
+        var user = MakeUser();
+        var requesterId = Guid.NewGuid();
+        _users.GetByNormalizedUsernameAsync("TESTUSER").Returns(user);
+        var friends = Substitute.For<IFriendRepository>();
+        friends.IsBlockedEitherDirectionAsync(user.Id, requesterId).Returns(true);
+        var service = new ProfileService(_users, _profiles, _usernameRequests, _storage, Options.Create(_storageOptions), friends);
+
+        var result = await service.GetPublicProfileAsync("testuser", requesterId);
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error!.Code.Should().Be("Profile.Blocked");
     }
 
     [Fact]
