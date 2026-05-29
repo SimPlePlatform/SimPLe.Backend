@@ -2,37 +2,104 @@ using SimPle.Domain.Common;
 
 namespace SimPle.Domain.Friends;
 
-public class Friendship : Entity
+public sealed class Friendship : Entity
 {
-    public Guid RequesterId { get; private set; }
-    public Guid AddresseeId { get; private set; }
-    public FriendshipStatus Status { get; private set; } = FriendshipStatus.Pending;
+    public Guid UserId { get; private set; }
+    public Guid FriendUserId { get; private set; }
 
     private Friendship() { }
 
-    public static Friendship Request(Guid requesterId, Guid addresseeId) => new()
+    public static Friendship Create(Guid userId, Guid friendUserId)
     {
-        RequesterId = requesterId,
-        AddresseeId = addresseeId,
-        Status = FriendshipStatus.Pending,
-    };
+        if (userId == friendUserId)
+            throw new ArgumentException("A user cannot be friends with themselves.");
 
-    public void Accept() { Status = FriendshipStatus.Accepted; Touch(); }
-    public void Decline() { Status = FriendshipStatus.Declined; Touch(); }
+        return new Friendship
+        {
+            UserId = userId,
+            FriendUserId = friendUserId
+        };
+    }
 }
 
-public class Block : Entity
+public sealed class FriendRequest : Entity
 {
-    public Guid BlockerId { get; private set; }
-    public Guid BlockedId { get; private set; }
+    public Guid SenderUserId { get; private set; }
+    public Guid ReceiverUserId { get; private set; }
+    public FriendRequestStatus Status { get; private set; } = FriendRequestStatus.Pending;
+    public DateTime? RespondedAtUtc { get; private set; }
+    public DateTime? CancelledAtUtc { get; private set; }
 
-    private Block() { }
+    private FriendRequest() { }
 
-    public static Block Create(Guid blockerId, Guid blockedId) => new()
+    public static FriendRequest Create(Guid senderUserId, Guid receiverUserId)
     {
-        BlockerId = blockerId,
-        BlockedId = blockedId,
-    };
+        if (senderUserId == receiverUserId)
+            throw new ArgumentException("A user cannot send a friend request to themselves.");
+
+        return new FriendRequest
+        {
+            SenderUserId = senderUserId,
+            ReceiverUserId = receiverUserId
+        };
+    }
+
+    public void Accept()
+    {
+        if (Status != FriendRequestStatus.Pending) return;
+        Status = FriendRequestStatus.Accepted;
+        RespondedAtUtc = DateTime.UtcNow;
+        Touch();
+    }
+
+    public void Decline()
+    {
+        if (Status != FriendRequestStatus.Pending) return;
+        Status = FriendRequestStatus.Declined;
+        RespondedAtUtc = DateTime.UtcNow;
+        Touch();
+    }
+
+    public void Cancel()
+    {
+        if (Status != FriendRequestStatus.Pending) return;
+        Status = FriendRequestStatus.Cancelled;
+        CancelledAtUtc = DateTime.UtcNow;
+        Touch();
+    }
 }
 
-public enum FriendshipStatus { Pending, Accepted, Declined }
+public sealed class UserBlock : Entity
+{
+    public Guid BlockerUserId { get; private set; }
+    public Guid BlockedUserId { get; private set; }
+
+    private UserBlock() { }
+
+    public static UserBlock Create(Guid blockerUserId, Guid blockedUserId)
+    {
+        if (blockerUserId == blockedUserId)
+            throw new ArgumentException("A user cannot block themselves.");
+
+        return new UserBlock
+        {
+            BlockerUserId = blockerUserId,
+            BlockedUserId = blockedUserId
+        };
+    }
+}
+
+public enum FriendRequestStatus
+{
+    Pending,
+    Accepted,
+    Declined,
+    Cancelled
+}
+
+public enum FriendRequestPolicy
+{
+    Anyone,
+    FriendsOfFriends,
+    Off
+}

@@ -15,6 +15,7 @@ public sealed class ProfileService : IProfileService
     private readonly IUsernameChangeRequestRepository _usernameRequests;
     private readonly IFileStorageService _storage;
     private readonly StorageOptions _storageOptions;
+    private readonly IFriendRepository? _friends;
 
     private static readonly HashSet<string> AllowedImageTypes =
         new(StringComparer.OrdinalIgnoreCase) { "image/jpeg", "image/png", "image/webp" };
@@ -24,13 +25,15 @@ public sealed class ProfileService : IProfileService
         IProfileRepository profiles,
         IUsernameChangeRequestRepository usernameRequests,
         IFileStorageService storage,
-        IOptions<StorageOptions> storageOptions)
+        IOptions<StorageOptions> storageOptions,
+        IFriendRepository? friends = null)
     {
         _users = users;
         _profiles = profiles;
         _usernameRequests = usernameRequests;
         _storage = storage;
         _storageOptions = storageOptions.Value;
+        _friends = friends;
     }
 
     public async Task<Result<ProfileDto>> GetMyProfileAsync(Guid userId, CancellationToken ct = default)
@@ -38,7 +41,7 @@ public sealed class ProfileService : IProfileService
         var user = await _users.GetByIdAsync(userId, ct);
         if (user is null) return Result<ProfileDto>.Fail("General.NotFound", "User not found.");
 
-        return await BuildDtoAsync(user, ct);
+        return await BuildDtoAsync(user, userId, ct);
     }
 
     public async Task<Result<ProfileDto>> GetPublicProfileAsync(
@@ -52,9 +55,20 @@ public sealed class ProfileService : IProfileService
             return Result<ProfileDto>.Fail("Profile.Private", "This profile is private.");
 
         if (user.Visibility == ProfileVisibility.FriendsOnly && user.Id != requesterId)
-            return Result<ProfileDto>.Fail("Profile.FriendsOnly", "This profile is visible to friends only.");
+        {
+            var canView = requesterId.HasValue &&
+                _friends is not null &&
+                await _friends.AreFriendsAsync(user.Id, requesterId.Value, ct) &&
+                !await _friends.IsBlockedEitherDirectionAsync(user.Id, requesterId.Value, ct);
+            if (!canView)
+                return Result<ProfileDto>.Fail("Profile.FriendsOnly", "This profile is visible to friends only.");
+        }
 
-        return await BuildDtoAsync(user, ct);
+        if (requesterId.HasValue && user.Id != requesterId.Value && _friends is not null &&
+            await _friends.IsBlockedEitherDirectionAsync(user.Id, requesterId.Value, ct))
+            return Result<ProfileDto>.Fail("Profile.Blocked", "This profile is not available.");
+
+        return await BuildDtoAsync(user, requesterId, ct);
     }
 
     public async Task<Result<ProfileDto>> UpdateProfileAsync(
@@ -82,7 +96,7 @@ public sealed class ProfileService : IProfileService
             profileType);
 
         await _users.UpdateAsync(user, ct);
-        return await BuildDtoAsync(user, ct);
+        return await BuildDtoAsync(user, userId, ct);
     }
 
     public Task<Result<ProfileMediaUploadUrlDto>> CreateAvatarUploadUrlAsync(
@@ -110,7 +124,7 @@ public sealed class ProfileService : IProfileService
         if (!string.IsNullOrWhiteSpace(previousKey))
             await _storage.DeleteObjectAsync(previousKey, ct);
 
-        return await BuildDtoAsync(user, ct);
+        return await BuildDtoAsync(user, userId, ct);
     }
 
     public async Task<Result<ProfileDto>> RemoveBannerAsync(Guid userId, CancellationToken ct = default)
@@ -124,7 +138,7 @@ public sealed class ProfileService : IProfileService
         if (!string.IsNullOrWhiteSpace(previousKey))
             await _storage.DeleteObjectAsync(previousKey, ct);
 
-        return await BuildDtoAsync(user, ct);
+        return await BuildDtoAsync(user, userId, ct);
     }
 
     public async Task<Result<ProfileDto>> UpdateAvatarFallbackColorAsync(
@@ -138,7 +152,7 @@ public sealed class ProfileService : IProfileService
 
         user.UpdateAvatarFallbackColor(color);
         await _users.UpdateAsync(user, ct);
-        return await BuildDtoAsync(user, ct);
+        return await BuildDtoAsync(user, userId, ct);
     }
 
     public async Task<Result<ProfileDto>> UpdateBannerFallbackColorAsync(
@@ -152,7 +166,7 @@ public sealed class ProfileService : IProfileService
 
         user.UpdateBannerFallbackColor(color);
         await _users.UpdateAsync(user, ct);
-        return await BuildDtoAsync(user, ct);
+        return await BuildDtoAsync(user, userId, ct);
     }
 
     public async Task<Result<UsernameChangeResultDto>> UpdateUsernameAsync(Guid userId, string newUsername, CancellationToken ct = default)
@@ -354,14 +368,14 @@ public sealed class ProfileService : IProfileService
             !string.Equals(previousKey, objectKey, StringComparison.Ordinal))
             await _storage.DeleteObjectAsync(previousKey, ct);
 
-        return await BuildDtoAsync(user, ct);
+        return await BuildDtoAsync(user, userId, ct);
     }
 
-    private async Task<Result<ProfileDto>> BuildDtoAsync(User user, CancellationToken ct)
+    private async Task<Result<ProfileDto>> BuildDtoAsync(User user, Guid? requesterId, CancellationToken ct)
     {
         var links = await _profiles.GetLinksByUserIdAsync(user.Id, ct);
         var interests = await _profiles.GetInterestsByUserIdAsync(user.Id, ct);
-        return Result<ProfileDto>.Ok(await ToDtoAsync(user, links, interests, ct));
+        return Result<ProfileDto>.Ok(await ToDtoAsync(user, links, interests, requesterId, ct));
     }
 
     private static UsernameChangeRequestDto ToRequestDto(UsernameChangeRequest r) => new(
@@ -374,6 +388,7 @@ public sealed class ProfileService : IProfileService
         User user,
         IReadOnlyList<ProfileExternalLink> links,
         IReadOnlyList<ProfileInterestTag> interests,
+        Guid? requesterId,
         CancellationToken ct)
     {
         var readExpiry = TimeSpan.FromMinutes(_storageOptions.ReadUrlExpiryMinutes);
@@ -403,9 +418,28 @@ public sealed class ProfileService : IProfileService
             Role: user.Role.ToString(),
             Level: user.Level,
             Elo: user.Elo,
+            FriendCount: _friends is null ? 0 : await _friends.CountFriendsAsync(user.Id, ct),
+            FriendshipStatus: await GetFriendshipStatusAsync(user.Id, requesterId, ct),
             JoinedAt: user.CreatedAt,
             Links: links.Select(ToLinkDto).ToList(),
             Interests: interests.Select(t => t.Name).ToList());
+    }
+
+    private async Task<string> GetFriendshipStatusAsync(Guid userId, Guid? requesterId, CancellationToken ct)
+    {
+        if (!requesterId.HasValue || _friends is null)
+            return "Unknown";
+        if (requesterId.Value == userId)
+            return "Self";
+        if (await _friends.GetBlockAsync(requesterId.Value, userId, ct) is not null ||
+            await _friends.GetBlockAsync(userId, requesterId.Value, ct) is not null)
+            return "Blocked";
+        if (await _friends.AreFriendsAsync(requesterId.Value, userId, ct))
+            return "Friends";
+        var pending = await _friends.GetPendingRequestBetweenAsync(requesterId.Value, userId, ct);
+        if (pending is not null)
+            return pending.SenderUserId == requesterId.Value ? "RequestSent" : "RequestReceived";
+        return "None";
     }
 
     private static ExternalLinkDto ToLinkDto(ProfileExternalLink l) => new(

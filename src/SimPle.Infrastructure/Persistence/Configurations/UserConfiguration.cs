@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using SimPle.Domain.Friends;
 using SimPle.Domain.Users;
 
 namespace SimPle.Infrastructure.Persistence.Configurations;
@@ -34,6 +35,7 @@ public sealed class UserConfiguration : IEntityTypeConfiguration<User>
         builder.Property(u => u.SubscriptionTier).HasConversion<string>();
         builder.Property(u => u.Visibility).HasConversion<string>().HasDefaultValue(ProfileVisibility.Public);
         builder.Property(u => u.ProfileType).HasConversion<string>().HasDefaultValue(ProfileType.Player);
+        builder.Property(u => u.FriendRequestPolicy).HasConversion<string>().HasDefaultValue(FriendRequestPolicy.Anyone);
 
         builder.Property(u => u.GoogleId).HasMaxLength(255);
 

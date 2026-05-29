@@ -19,6 +19,8 @@ public sealed record ProfileDto(
     string Role,
     int Level,
     int Elo,
+    int FriendCount,
+    string FriendshipStatus,
     DateTime JoinedAt,
     IReadOnlyList<ExternalLinkDto> Links,
     IReadOnlyList<string> Interests);

@@ -38,6 +38,7 @@ public static class DependencyInjection
         services.AddScoped<IEmailService, SmtpEmailService>();
         services.AddScoped<IGoogleTokenValidationService, GoogleTokenValidationService>();
         services.AddScoped<IProfileRepository, ProfileRepository>();
+        services.AddScoped<IFriendRepository, FriendRepository>();
         services.AddScoped<IUsernameChangeRequestRepository, UsernameChangeRequestRepository>();
         services.Configure<StorageOptions>(configuration.GetSection(StorageOptions.SectionName));
         services.PostConfigure<StorageOptions>(options =>

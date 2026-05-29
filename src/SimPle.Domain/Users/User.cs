@@ -1,4 +1,5 @@
 using SimPle.Domain.Common;
+using SimPle.Domain.Friends;
 
 namespace SimPle.Domain.Users;
 
@@ -33,6 +34,7 @@ public class User : Entity
     public string? StatusMessage { get; private set; }
     public ProfileVisibility Visibility { get; private set; } = ProfileVisibility.Public;
     public ProfileType ProfileType { get; private set; } = ProfileType.Player;
+    public FriendRequestPolicy FriendRequestPolicy { get; private set; } = FriendRequestPolicy.Anyone;
     public int? LastUsernameImmediateChangeYear { get; private set; }
     public int? LastUsernameImmediateChangeMonth { get; private set; }
     public int? LastUsernameAdminRequestYear { get; private set; }
@@ -141,6 +143,12 @@ public class User : Entity
     public void UpdateBannerFallbackColor(string color)
     {
         BannerFallbackColor = color.Trim();
+        Touch();
+    }
+
+    public void UpdateFriendRequestPolicy(FriendRequestPolicy policy)
+    {
+        FriendRequestPolicy = policy;
         Touch();
     }
 
