@@ -14,3 +14,5 @@ public sealed record ProfileMediaUploadUrlDto(
 public sealed record ConfirmProfileMediaUploadRequestDto(string ObjectKey);
 
 public sealed record UpdateAvatarFallbackRequestDto(string Color);
+
+public sealed record UpdateBannerFallbackRequestDto(string Color);

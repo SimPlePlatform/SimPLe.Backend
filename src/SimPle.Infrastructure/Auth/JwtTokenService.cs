@@ -17,16 +17,19 @@ public sealed class JwtTokenService : ITokenService
         _settings = settings.Value;
     }
 
-    public (string Token, DateTime ExpiresAt) GenerateAccessToken(Guid userId, string username, string role)
+    public (string Token, DateTime ExpiresAt, string Jti) GenerateAccessToken(Guid userId, string username, string role, Guid familyId)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_settings.SecretKey));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
         var expiresAt = DateTime.UtcNow.AddMinutes(_settings.ExpiryMinutes);
+        var jti = Guid.NewGuid().ToString();
 
         var claims = new[]
         {
             new Claim(JwtRegisteredClaimNames.Sub, userId.ToString()),
-            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new Claim(JwtRegisteredClaimNames.Jti, jti),
+            // sid = session family ID, stable across token rotation, used for immediate session revocation.
+            new Claim(JwtRegisteredClaimNames.Sid, familyId.ToString()),
             new Claim(ClaimTypes.Name, username),
             new Claim(ClaimTypes.Role, role),
         };
@@ -38,7 +41,7 @@ public sealed class JwtTokenService : ITokenService
             expires: expiresAt,
             signingCredentials: credentials);
 
-        return (new JwtSecurityTokenHandler().WriteToken(token), expiresAt);
+        return (new JwtSecurityTokenHandler().WriteToken(token), expiresAt, jti);
     }
 
     public string GenerateRawRefreshToken()

@@ -23,6 +23,7 @@ public sealed class UserConfiguration : IEntityTypeConfiguration<User>
         builder.Property(u => u.BannerUrl).HasMaxLength(500);
         builder.Property(u => u.BannerObjectKey).HasMaxLength(300);
         builder.Property(u => u.Color).HasMaxLength(20).IsRequired();
+        builder.Property(u => u.BannerFallbackColor).HasMaxLength(20).IsRequired();
         builder.Property(u => u.Initials).HasMaxLength(4).IsRequired();
         builder.Property(u => u.Region).HasMaxLength(50).IsRequired();
 
@@ -32,7 +33,7 @@ public sealed class UserConfiguration : IEntityTypeConfiguration<User>
         builder.Property(u => u.Status).HasConversion<string>();
         builder.Property(u => u.SubscriptionTier).HasConversion<string>();
         builder.Property(u => u.Visibility).HasConversion<string>().HasDefaultValue(ProfileVisibility.Public);
-        builder.Property(u => u.ProfileType).HasConversion<string>().HasDefaultValue(ProfileType.Gamer);
+        builder.Property(u => u.ProfileType).HasConversion<string>().HasDefaultValue(ProfileType.Player);
 
         builder.Property(u => u.GoogleId).HasMaxLength(255);
 

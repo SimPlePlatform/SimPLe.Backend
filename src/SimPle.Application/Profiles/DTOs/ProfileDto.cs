@@ -12,9 +12,10 @@ public sealed record ProfileDto(
     string? StatusMessage,
     string Region,
     string Color,
+    string BannerFallbackColor,
     string Initials,
     string Visibility,   // "Public" | "FriendsOnly" | "Private"
-    string ProfileType,  // "Gamer" | "Developer"
+    string ProfileType,  // "Player" | "Developer"
     string Role,
     int Level,
     int Elo,

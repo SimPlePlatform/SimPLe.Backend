@@ -16,6 +16,7 @@ public class User : Entity
     public string? BannerUrl { get; private set; }
     public string? BannerObjectKey { get; private set; }
     public string Color { get; private set; } = "#F0394B";
+    public string BannerFallbackColor { get; private set; } = "#0F1422";
     public string Initials { get; private set; } = default!;
     public int Level { get; private set; } = 1;
     public long Xp { get; private set; }
@@ -31,7 +32,11 @@ public class User : Entity
     // Profile social identity
     public string? StatusMessage { get; private set; }
     public ProfileVisibility Visibility { get; private set; } = ProfileVisibility.Public;
-    public ProfileType ProfileType { get; private set; } = ProfileType.Gamer;
+    public ProfileType ProfileType { get; private set; } = ProfileType.Player;
+    public int? LastUsernameImmediateChangeYear { get; private set; }
+    public int? LastUsernameImmediateChangeMonth { get; private set; }
+    public int? LastUsernameAdminRequestYear { get; private set; }
+    public int? LastUsernameAdminRequestMonth { get; private set; }
 
     // Auth security fields
     public int FailedLoginCount { get; private set; }
@@ -84,15 +89,13 @@ public class User : Entity
     }
 
     public void UpdateProfile(
-        string displayName, string? bio, string? avatarUrl, string? bannerUrl,
+        string displayName, string? bio,
         string? region = null, string? statusMessage = null,
         ProfileVisibility? visibility = null,
         ProfileType? profileType = null)
     {
         DisplayName = displayName;
         Bio = bio;
-        AvatarUrl = avatarUrl;
-        BannerUrl = bannerUrl;
         Initials = BuildInitials(displayName);
         if (region is not null) Region = region;
         StatusMessage = statusMessage;
@@ -135,10 +138,36 @@ public class User : Entity
         Touch();
     }
 
+    public void UpdateBannerFallbackColor(string color)
+    {
+        BannerFallbackColor = color.Trim();
+        Touch();
+    }
+
     public void UpdateUsername(string newUsername)
     {
         Username = newUsername.Trim();
         NormalizedUsername = newUsername.Trim().ToUpperInvariant();
+        Touch();
+    }
+
+    public bool HasUsedImmediateUsernameChangeIn(int year, int month) =>
+        LastUsernameImmediateChangeYear == year && LastUsernameImmediateChangeMonth == month;
+
+    public bool HasUsedAdminUsernameRequestIn(int year, int month) =>
+        LastUsernameAdminRequestYear == year && LastUsernameAdminRequestMonth == month;
+
+    public void RecordImmediateUsernameChange(int year, int month)
+    {
+        LastUsernameImmediateChangeYear = year;
+        LastUsernameImmediateChangeMonth = month;
+        Touch();
+    }
+
+    public void RecordAdminUsernameRequest(int year, int month)
+    {
+        LastUsernameAdminRequestYear = year;
+        LastUsernameAdminRequestMonth = month;
         Touch();
     }
 
@@ -199,4 +228,4 @@ public enum UserStatus { Offline, Online, Away, Playing, InLobby }
 public enum UserRole { Player, Moderator, Admin }
 public enum SubscriptionTier { Free, Plus, Pro }
 public enum ProfileVisibility { Public, FriendsOnly, Private }
-public enum ProfileType { Gamer, Developer }
+public enum ProfileType { Player, Developer }

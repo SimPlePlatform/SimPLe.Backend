@@ -47,7 +47,7 @@ public sealed class StorageOptionsTests
         {
             ["Storage:Provider"] = "AWS",
             ["Storage:BucketName"] = "simpleplatform-profile-assets-prod",
-            ["Storage:Region"] = "eu-west-1",
+            ["Storage:Region"] = "us-east-1",
             ["Storage:ServiceUrl"] = "",
             ["Storage:ProfilePrefix"] = "profile-assets",
             ["Storage:ForcePathStyle"] = "false",
@@ -63,7 +63,7 @@ public sealed class StorageOptionsTests
         var config = S3FileStorageService.BuildClientConfig(options);
         config.ServiceURL.Should().BeNull();
         config.ForcePathStyle.Should().BeFalse();
-        config.RegionEndpoint.SystemName.Should().Be("eu-west-1");
+        config.RegionEndpoint.SystemName.Should().Be("us-east-1");
     }
 
     [Fact]

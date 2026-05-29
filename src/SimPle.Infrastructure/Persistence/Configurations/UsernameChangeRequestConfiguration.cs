@@ -16,9 +16,12 @@ public sealed class UsernameChangeRequestConfiguration : IEntityTypeConfiguratio
         builder.Property(r => r.NormalizedRequestedUsername).HasMaxLength(30).IsRequired();
         builder.Property(r => r.Status).HasConversion<string>().IsRequired();
         builder.Property(r => r.RejectionReason).HasMaxLength(256);
+        builder.Property(r => r.RequestYear).IsRequired();
+        builder.Property(r => r.RequestMonth).IsRequired();
 
         builder.HasIndex(r => r.UserId);
         builder.HasIndex(r => new { r.UserId, r.Status });
+        builder.HasIndex(r => new { r.UserId, r.RequestYear, r.RequestMonth });
 
         builder.HasOne<User>()
             .WithMany()

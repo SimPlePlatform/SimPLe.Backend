@@ -30,6 +30,8 @@ public sealed class ProfileServiceTests
         _profiles.GetLinksByUserIdAsync(Arg.Any<Guid>()).Returns((IReadOnlyList<ProfileExternalLink>)[]);
         _profiles.GetInterestsByUserIdAsync(Arg.Any<Guid>()).Returns((IReadOnlyList<ProfileInterestTag>)[]);
         _usernameRequests.GetPendingByUserIdAsync(Arg.Any<Guid>()).Returns((UsernameChangeRequest?)null);
+        _usernameRequests.GetByUserIdAndMonthAsync(Arg.Any<Guid>(), Arg.Any<int>(), Arg.Any<int>())
+            .Returns((UsernameChangeRequest?)null);
         _storage.CreatePresignedPutUrlAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan>())
             .Returns(x => $"https://upload.example.test/{x.ArgAt<string>(0)}");
         _storage.CreatePresignedReadUrlAsync(Arg.Any<string>(), Arg.Any<TimeSpan>())
@@ -55,7 +57,7 @@ public sealed class ProfileServiceTests
         result.Value!.UserId.Should().Be(user.Id);
         result.Value.Username.Should().Be("testuser");
         result.Value.Visibility.Should().Be("Public");
-        result.Value.ProfileType.Should().Be("Gamer");
+        result.Value.ProfileType.Should().Be("Player");
     }
 
     [Fact]
@@ -87,7 +89,7 @@ public sealed class ProfileServiceTests
     public async Task GetPublicProfile_PrivateUser_HiddenFromOthers()
     {
         var user = MakeUser();
-        user.UpdateProfile("Test", null, null, null, visibility: ProfileVisibility.Private);
+        user.UpdateProfile("Test", null, visibility: ProfileVisibility.Private);
         _users.GetByNormalizedUsernameAsync("TESTUSER").Returns(user);
 
         var result = await _service.GetPublicProfileAsync("testuser", Guid.NewGuid());
@@ -100,7 +102,7 @@ public sealed class ProfileServiceTests
     public async Task GetPublicProfile_PrivateUser_VisibleToOwner()
     {
         var user = MakeUser();
-        user.UpdateProfile("Test", null, null, null, visibility: ProfileVisibility.Private);
+        user.UpdateProfile("Test", null, visibility: ProfileVisibility.Private);
         _users.GetByNormalizedUsernameAsync("TESTUSER").Returns(user);
 
         var result = await _service.GetPublicProfileAsync("testuser", user.Id);
@@ -112,7 +114,7 @@ public sealed class ProfileServiceTests
     public async Task GetPublicProfile_FriendsOnly_TreatedAsOwnerOnly()
     {
         var user = MakeUser();
-        user.UpdateProfile("Test", null, null, null, visibility: ProfileVisibility.FriendsOnly);
+        user.UpdateProfile("Test", null, visibility: ProfileVisibility.FriendsOnly);
         _users.GetByNormalizedUsernameAsync("TESTUSER").Returns(user);
 
         var result = await _service.GetPublicProfileAsync("testuser", Guid.NewGuid());
@@ -143,8 +145,6 @@ public sealed class ProfileServiceTests
         var result = await _service.UpdateProfileAsync(user.Id, new UpdateProfileRequestDto(
             DisplayName: "Updated Name",
             Bio: "My bio",
-            AvatarUrl: null,
-            BannerUrl: null,
             Region: "NA-East",
             StatusMessage: "Playing!",
             Visibility: "FriendsOnly",
@@ -168,7 +168,7 @@ public sealed class ProfileServiceTests
 
         // If the visibility string doesn't parse, the enum stays at its current value.
         var result = await _service.UpdateProfileAsync(user.Id, new UpdateProfileRequestDto(
-            "Name", null, null, null, null, null, "InvalidEnum", null));
+            "Name", null, null, null, "InvalidEnum", null));
 
         result.IsSuccess.Should().BeTrue();
         result.Value!.Visibility.Should().Be("Public"); // unchanged default
@@ -186,18 +186,92 @@ public sealed class ProfileServiceTests
         var result = await _service.UpdateUsernameAsync(user.Id, "newhandle");
 
         result.IsSuccess.Should().BeTrue();
+        result.Value!.AppliedImmediately.Should().BeTrue();
         await _users.Received(1).UpdateAsync(Arg.Is<User>(u => u.Username == "newhandle"));
     }
 
     [Fact]
     public async Task UpdateUsername_Taken_Fails()
     {
+        var user = MakeUser();
+        _users.GetByIdAsync(user.Id).Returns(user);
         _users.ExistsByUsernameAsync(Arg.Any<string>()).Returns(true);
 
-        var result = await _service.UpdateUsernameAsync(Guid.NewGuid(), "takenname");
+        var result = await _service.UpdateUsernameAsync(user.Id, "takenname");
 
         result.IsSuccess.Should().BeFalse();
         result.Error!.Code.Should().Be("Profile.UsernameTaken");
+    }
+
+    [Fact]
+    public async Task UpdateUsername_SecondChangeInMonth_CreatesAdminRequest()
+    {
+        var user = MakeUser();
+        var now = DateTime.UtcNow;
+        user.RecordImmediateUsernameChange(now.Year, now.Month);
+        _users.GetByIdAsync(user.Id).Returns(user);
+        _users.ExistsByUsernameAsync("SECONDHANDLE").Returns(false);
+
+        var result = await _service.UpdateUsernameAsync(user.Id, "secondhandle");
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.AppliedImmediately.Should().BeFalse();
+        result.Value.Request!.RequestedUsername.Should().Be("secondhandle");
+        result.Value.Request.Status.Should().Be("Pending");
+        await _usernameRequests.Received(1).AddAsync(Arg.Is<UsernameChangeRequest>(r =>
+            r.UserId == user.Id &&
+            r.RequestedUsername == "secondhandle" &&
+            r.RequestYear == now.Year &&
+            r.RequestMonth == now.Month));
+    }
+
+    [Fact]
+    public async Task RequestUsernameChange_PendingRequest_UpdatesSameRequest()
+    {
+        var user = MakeUser();
+        var now = DateTime.UtcNow;
+        var existing = UsernameChangeRequest.Create(user.Id, "oldhandle", now.Year, now.Month);
+        _users.GetByIdAsync(user.Id).Returns(user);
+        _users.ExistsByUsernameAsync("NEWHANDLE").Returns(false);
+        _usernameRequests.GetPendingByUserIdAsync(user.Id).Returns(existing);
+
+        var result = await _service.RequestUsernameChangeAsync(user.Id, "newhandle");
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.RequestedUsername.Should().Be("newhandle");
+        await _usernameRequests.Received(1).UpdateAsync(Arg.Is<UsernameChangeRequest>(r => r.Id == existing.Id));
+        await _usernameRequests.DidNotReceive().AddAsync(Arg.Any<UsernameChangeRequest>());
+    }
+
+    [Fact]
+    public async Task CancelUsernameChangeRequest_PendingRequest_MarksCancelled()
+    {
+        var user = MakeUser();
+        var now = DateTime.UtcNow;
+        var existing = UsernameChangeRequest.Create(user.Id, "oldhandle", now.Year, now.Month);
+        _usernameRequests.GetPendingByUserIdAsync(user.Id).Returns(existing);
+
+        var result = await _service.CancelUsernameChangeRequestAsync(user.Id);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.Status.Should().Be("Cancelled");
+        result.Value.CanCancel.Should().BeFalse();
+        await _usernameRequests.Received(1).UpdateAsync(Arg.Is<UsernameChangeRequest>(r => r.Status == UsernameChangeStatus.Cancelled));
+    }
+
+    [Fact]
+    public async Task RequestUsernameChange_AdminAllowanceAlreadyUsed_Fails()
+    {
+        var user = MakeUser();
+        var now = DateTime.UtcNow;
+        user.RecordAdminUsernameRequest(now.Year, now.Month);
+        _users.GetByIdAsync(user.Id).Returns(user);
+        _users.ExistsByUsernameAsync("ANOTHERHANDLE").Returns(false);
+
+        var result = await _service.RequestUsernameChangeAsync(user.Id, "anotherhandle");
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error!.Code.Should().Be("Profile.MonthlyAdminRequestUsed");
     }
 
     // ── UpdateLinks ───────────────────────────────────────────────────────────
@@ -250,13 +324,12 @@ public sealed class ProfileServiceTests
     // ── Validators ────────────────────────────────────────────────────────────
 
     [Theory]
-    [InlineData("", null, null, null)]        // empty display name
-    [InlineData("Name", null, "not-https", null)]  // avatar not https
-    public async Task UpdateProfileValidator_InvalidInput_HasErrors(
-        string displayName, string? bio, string? avatarUrl, string? bannerUrl)
+    [InlineData("")]                           // empty display name
+    [InlineData("   ")]                        // whitespace display name
+    public async Task UpdateProfileValidator_InvalidInput_HasErrors(string displayName)
     {
         var validator = new UpdateProfileRequestValidator();
-        var dto = new UpdateProfileRequestDto(displayName, bio, avatarUrl, bannerUrl, null, null, null, null);
+        var dto = new UpdateProfileRequestDto(displayName, null, null, null, null, null);
         var result = await validator.ValidateAsync(dto, CancellationToken.None);
         result.IsValid.Should().BeFalse();
     }
@@ -265,11 +338,20 @@ public sealed class ProfileServiceTests
     public async Task UpdateProfileValidator_ValidInput_Passes()
     {
         var validator = new UpdateProfileRequestValidator();
-        var dto = new UpdateProfileRequestDto(
-            "Test User", "Bio text", "https://example.com/avatar.png",
-            null, "EU-West", null, "Public", "Gamer");
+        var dto = new UpdateProfileRequestDto("Test User", "Bio text", "NA-East", null, "Public", "Player");
         var result = await validator.ValidateAsync(dto, CancellationToken.None);
         result.IsValid.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task UpdateProfileValidator_AvatarUrl_NotAccepted()
+    {
+        // AvatarUrl and BannerUrl must not be accepted in profile update requests.
+        // Media is managed exclusively through the upload/confirm/remove endpoints.
+        var dto = typeof(UpdateProfileRequestDto);
+        var properties = dto.GetProperties().Select(p => p.Name).ToArray();
+        properties.Should().NotContain("AvatarUrl");
+        properties.Should().NotContain("BannerUrl");
     }
 
     [Fact]
@@ -425,6 +507,33 @@ public sealed class ProfileServiceTests
         result.Value!.Color.Should().Be("#3366AA");
     }
 
+    [Fact]
+    public async Task UpdateBannerFallbackColor_ValidColor_UpdatesColor()
+    {
+        var user = MakeUser();
+        _users.GetByIdAsync(user.Id).Returns(user);
+
+        var result = await _service.UpdateBannerFallbackColorAsync(user.Id, "#123456");
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.BannerFallbackColor.Should().Be("#123456");
+    }
+
+    [Theory]
+    [InlineData("red")]
+    [InlineData("url(javascript:alert(1))")]
+    [InlineData("#12")]
+    public async Task UpdateBannerFallbackColor_InvalidColor_Fails(string color)
+    {
+        var user = MakeUser();
+        _users.GetByIdAsync(user.Id).Returns(user);
+
+        var result = await _service.UpdateBannerFallbackColorAsync(user.Id, color);
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error!.Code.Should().Be("Validation.Failed");
+    }
+
     [Theory]
     [InlineData("ab")]          // too short
     [InlineData("has space")]   // invalid chars
@@ -492,12 +601,51 @@ public sealed class ProfileServiceTests
         var validator = new UpdateLinksRequestValidator();
         var dto = new UpdateLinksRequestDto(
         [
-            new LinkItemDto("github", "https://github.com/a", null, 0),
-            new LinkItemDto("xtwitter", "https://x.com/a", null, 1),
-            new LinkItemDto("instagram", "https://instagram.com/a", null, 2),
-            new LinkItemDto("discord", "https://discord.com/users/a", null, 3),
-            new LinkItemDto("website", "https://example.com", null, 4),
-            new LinkItemDto("website", "https://example.org", null, 5)
+            new LinkItemDto("github",    "https://github.com/a",         null, 0),
+            new LinkItemDto("xtwitter",  "https://x.com/a",              null, 1),
+            new LinkItemDto("instagram", "https://www.instagram.com/a",  null, 2),
+            new LinkItemDto("discord",   "https://discord.gg/example",   null, 3),
+            new LinkItemDto("github",    "https://github.com/b",         null, 4),
+            new LinkItemDto("xtwitter",  "https://x.com/b",              null, 5)
+        ]);
+
+        var result = await validator.ValidateAsync(dto, CancellationToken.None);
+
+        result.IsValid.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("github",    "testuser",                    "https://github.com/testuser")]
+    [InlineData("github",    "https://github.com/testuser", "https://github.com/testuser")]
+    [InlineData("xtwitter",  "testuser",                    "https://x.com/testuser")]
+    [InlineData("xtwitter",  "https://x.com/testuser",      "https://x.com/testuser")]
+    [InlineData("xtwitter",  "https://twitter.com/user",    "https://x.com/user")]
+    [InlineData("instagram", "testuser",                    "https://www.instagram.com/testuser")]
+    [InlineData("instagram", "@testuser",                   "https://www.instagram.com/testuser")]
+    public void ProfileExternalLink_NormalizeUrl_ReturnsCanonicalUrl(string platform, string input, string expected)
+    {
+        var result = ProfileExternalLink.NormalizeUrlForPlatform(platform, input);
+        result.Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("github",    "https://evil.com/user")]
+    [InlineData("xtwitter",  "https://evil.com/user")]
+    [InlineData("instagram", "https://evil.com/user")]
+    [InlineData("github",    "javascript:alert(1)")]
+    public void ProfileExternalLink_NormalizeUrl_RejectsInvalidDomain(string platform, string input)
+    {
+        var act = () => ProfileExternalLink.NormalizeUrlForPlatform(platform, input);
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public async Task LinksValidator_Website_NotAccepted()
+    {
+        var validator = new UpdateLinksRequestValidator();
+        var dto = new UpdateLinksRequestDto(
+        [
+            new LinkItemDto("website", "https://example.com", null, 0)
         ]);
 
         var result = await validator.ValidateAsync(dto, CancellationToken.None);
@@ -509,7 +657,7 @@ public sealed class ProfileServiceTests
     public async Task UpdateProfileValidator_InvalidProfileType_HasErrors()
     {
         var validator = new UpdateProfileRequestValidator();
-        var dto = new UpdateProfileRequestDto("Test User", null, null, null, null, null, "Public", "Admin");
+        var dto = new UpdateProfileRequestDto("Test User", null, null, null, "Public", "Admin");
 
         var result = await validator.ValidateAsync(dto, CancellationToken.None);
 
@@ -522,6 +670,132 @@ public sealed class ProfileServiceTests
         var validator = new UpdateInterestsRequestValidator();
         var dto = new UpdateInterestsRequestDto(["not-a-real-interest"]);
         var result = await validator.ValidateAsync(dto, CancellationToken.None);
+        result.IsValid.Should().BeFalse();
+    }
+
+    // ── Security regression tests ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task UpdateProfile_DeveloperType_DoesNotElevateRole()
+    {
+        var user = MakeUser();
+        _users.GetByIdAsync(user.Id).Returns(user);
+
+        var result = await _service.UpdateProfileAsync(user.Id, new UpdateProfileRequestDto(
+            "Dev", null, null, null, "Public", "Developer"));
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.ProfileType.Should().Be("Developer");
+        result.Value.Role.Should().Be("Player");
+    }
+
+    [Fact]
+    public async Task CreateAvatarUploadUrl_SvgContentType_Fails()
+    {
+        var user = MakeUser();
+        _users.GetByIdAsync(user.Id).Returns(user);
+
+        var result = await _service.CreateAvatarUploadUrlAsync(user.Id,
+            new ProfileMediaUploadUrlRequestDto("icon.svg", "image/svg+xml", 1024));
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error!.Code.Should().Be("Validation.Failed");
+    }
+
+    [Fact]
+    public async Task CreateAvatarUploadUrl_GifContentType_Fails()
+    {
+        var user = MakeUser();
+        _users.GetByIdAsync(user.Id).Returns(user);
+
+        var result = await _service.CreateAvatarUploadUrlAsync(user.Id,
+            new ProfileMediaUploadUrlRequestDto("anim.gif", "image/gif", 1024));
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error!.Code.Should().Be("Validation.Failed");
+    }
+
+    [Fact]
+    public async Task UpdateAvatarFallbackColor_HexInjectionAttempt_Fails()
+    {
+        var user = MakeUser();
+        _users.GetByIdAsync(user.Id).Returns(user);
+
+        var result = await _service.UpdateAvatarFallbackColorAsync(user.Id, "red; background: url(evil)");
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error!.Code.Should().Be("Validation.Failed");
+    }
+
+    [Fact]
+    public async Task GetPublicProfile_EuWestRegion_IsNormalizedToEmpty()
+    {
+        var user = MakeUser();
+        // Simulate old data with eu-west region stored in DB.
+        user.UpdateProfile("Test", null, "eu-west");
+        _users.GetByNormalizedUsernameAsync("TESTUSER").Returns(user);
+
+        var result = await _service.GetPublicProfileAsync("testuser", null);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.Region.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetMyProfile_RegionEuWest_IsNormalizedToEmpty()
+    {
+        var user = MakeUser();
+        user.UpdateProfile("Test", null, "eu-west");
+        _users.GetByIdAsync(user.Id).Returns(user);
+
+        var result = await _service.GetMyProfileAsync(user.Id);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.Region.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task LinksValidator_JavascriptScheme_Rejected()
+    {
+        var validator = new UpdateLinksRequestValidator();
+        var dto = new UpdateLinksRequestDto([new LinkItemDto("github", "javascript:alert(1)", null, 0)]);
+
+        var result = await validator.ValidateAsync(dto, CancellationToken.None);
+
+        result.IsValid.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task LinksValidator_EvilDomain_Rejected()
+    {
+        var validator = new UpdateLinksRequestValidator();
+        var dto = new UpdateLinksRequestDto([new LinkItemDto("github", "https://evil.com/user", null, 0)]);
+
+        var result = await validator.ValidateAsync(dto, CancellationToken.None);
+
+        result.IsValid.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("github",    "testhandle",                 "https://github.com/testhandle")]
+    [InlineData("xtwitter",  "testhandle",                 "https://x.com/testhandle")]
+    [InlineData("instagram", "@testhandle",                "https://www.instagram.com/testhandle")]
+    [InlineData("xtwitter",  "https://twitter.com/user",   "https://x.com/user")]
+    public void ProfileExternalLink_ValidHandleAndUrl_NormalizesCorrectly(
+        string platform, string input, string expectedUrl)
+    {
+        var result = ProfileExternalLink.NormalizeUrlForPlatform(platform, input);
+        result.Should().Be(expectedUrl);
+    }
+
+    [Fact]
+    public async Task UpdateProfileValidator_InvalidVisibility_HasErrors()
+    {
+        var validator = new UpdateProfileRequestValidator();
+        var dto = new UpdateProfileRequestDto("Name", null, null, null, "SuperAdmin", null);
+
+        var result = await validator.ValidateAsync(dto, CancellationToken.None);
+
         result.IsValid.Should().BeFalse();
     }
 }

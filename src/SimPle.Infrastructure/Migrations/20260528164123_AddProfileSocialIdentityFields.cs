@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
@@ -15,7 +15,7 @@ namespace SimPle.Infrastructure.Migrations
                 table: "users",
                 type: "text",
                 nullable: false,
-                defaultValue: "Gamer");
+                defaultValue: "Player");
         }
 
         /// <inheritdoc />

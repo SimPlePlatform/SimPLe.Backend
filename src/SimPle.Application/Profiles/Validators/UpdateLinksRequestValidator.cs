@@ -1,12 +1,13 @@
 using FluentValidation;
 using SimPle.Application.Profiles.DTOs;
+using SimPle.Domain.Profiles;
 
 namespace SimPle.Application.Profiles.Validators;
 
 public sealed class UpdateLinksRequestValidator : AbstractValidator<UpdateLinksRequestDto>
 {
     private static readonly string[] AllowedPlatforms =
-        ["github", "xtwitter", "twitter", "instagram", "discord", "website"];
+        ["github", "xtwitter", "twitter", "instagram", "discord"];
 
     public UpdateLinksRequestValidator()
     {
@@ -25,8 +26,8 @@ public sealed class UpdateLinksRequestValidator : AbstractValidator<UpdateLinksR
             link.RuleFor(l => l.Url)
                 .NotEmpty()
                 .MaximumLength(512)
-                .Must(IsHttpsUrl)
-                .WithMessage("URL must be a valid absolute HTTPS URL.");
+                .Must((item, url) => CanNormalizeForPlatform(item.Platform, url))
+                .WithMessage("The URL or handle is not valid for the selected platform.");
 
             link.RuleFor(l => l.DisplayLabel)
                 .MaximumLength(64)
@@ -34,16 +35,34 @@ public sealed class UpdateLinksRequestValidator : AbstractValidator<UpdateLinksR
         });
     }
 
-    private static bool IsHttpsUrl(string url) =>
-        Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
-        string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
+    private static bool CanNormalizeForPlatform(string platform, string url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return false;
+        var normalizedPlatform = NormalizePlatform(platform);
+        try
+        {
+            ProfileExternalLink.NormalizeUrlForPlatform(normalizedPlatform, url);
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
 
     private static bool HaveNoDuplicatePlatformUrls(IReadOnlyList<LinkItemDto>? links)
     {
         if (links is null) return true;
 
         return links
-            .Select(l => $"{NormalizePlatform(l.Platform)}|{NormalizeUrl(l.Url)}")
+            .Select(l =>
+            {
+                var platform = NormalizePlatform(l.Platform);
+                string normalized;
+                try { normalized = ProfileExternalLink.NormalizeUrlForPlatform(platform, l.Url); }
+                catch { normalized = l.Url.Trim().ToLowerInvariant(); }
+                return $"{platform}|{normalized.ToLowerInvariant()}";
+            })
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Count() == links.Count;
     }
@@ -52,9 +71,4 @@ public sealed class UpdateLinksRequestValidator : AbstractValidator<UpdateLinksR
         string.Equals(platform, "twitter", StringComparison.OrdinalIgnoreCase)
             ? "xtwitter"
             : platform.Trim().ToLowerInvariant();
-
-    private static string NormalizeUrl(string url) =>
-        Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri)
-            ? uri.GetLeftPart(UriPartial.Path).TrimEnd('/') + uri.Query
-            : url.Trim();
 }
